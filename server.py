@@ -168,7 +168,9 @@ class InputBridge:
         self.path = path
         self.proc = None
         source = path.with_suffix(".swift")
-        if not path.exists() or source.stat().st_mtime_ns > path.stat().st_mtime_ns:
+        # The app bundle ships a prebuilt, signed helper and no source; only a
+        # source checkout rebuilds it.
+        if source.exists() and (not path.exists() or source.stat().st_mtime_ns > path.stat().st_mtime_ns):
             with tempfile.TemporaryDirectory(prefix=".build-", dir=path.parent) as directory:
                 output = Path(directory) / path.name
                 subprocess.run(["/usr/bin/swiftc", "-O", str(source), "-o", str(output)], check=True)
