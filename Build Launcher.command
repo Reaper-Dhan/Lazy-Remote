@@ -54,6 +54,54 @@ cp auth.py platform_support.py server.py tls_setup.py index.html remote.js remot
 cp assets/logo.svg assets/touch-icon.png "$server/assets/"
 universal "$server/input_helper" input_helper.swift
 /usr/bin/codesign --force --sign - --identifier local.couch-remote.input-helper "$server/input_helper"
+
+# A private Python ships inside the app, so a Mac needs no developer tools.
+# python-build-standalone, pinned by release and checked against its SHA-256.
+python_release=20261110
+python_version=3.12.16
+python_arm64=2f11b8aa3726bdbd87dd9eb76568412faddf4f47e26913fa45d6a2e424972acd
+python_x86_64=b78a4c479f1964ec484880bee567568266f68da102269fb93a05fe8716b45f91
+cache="$project/.cache/python"
+mkdir -p "$cache"
+for arch in arm64 x86_64; do
+    triple=$([[ $arch == arm64 ]] && echo aarch64 || echo x86_64)
+    archive="cpython-$python_version+$python_release-$triple-apple-darwin-install_only_stripped.tar.gz"
+    expected_var="python_$arch"
+    if [[ ! -f "$cache/$archive" ]]; then
+        /usr/bin/curl -fsSL --retry 3 -o "$cache/$archive.part" \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/$python_release/${archive//+/%2B}"
+        mv "$cache/$archive.part" "$cache/$archive"
+    fi
+    if [[ "$(/usr/bin/shasum -a 256 "$cache/$archive" | cut -d' ' -f1)" != "${!expected_var}" ]]; then
+        rm -f "$cache/$archive"
+        echo "Checksum mismatch for $archive" >&2
+        exit 1
+    fi
+    mkdir -p "$staging/python-$arch"
+    /usr/bin/tar -xzf "$cache/$archive" -C "$staging/python-$arch"
+done
+python="$app/Contents/Resources/python"
+mv "$staging/python-arm64/python" "$python"
+# Drop what the server never imports: tests, Tk, IDLE, headers and docs.
+( cd "$python" && rm -rf include share lib/tcl* lib/tk* lib/itcl* lib/thread* lib/pkgconfig \
+    lib/libtcl* lib/libtk* bin/idle* bin/pydoc* bin/2to3* \
+    lib/python3.12/{test,idlelib,tkinter,turtledemo,ensurepip,lib2to3,pydoc_data,unittest,config-3.12-darwin} \
+    lib/python3.12/lib-dynload/_tkinter* lib/python3.12/site-packages )
+# Merge each Intel binary into its Apple Silicon twin, then re-sign it (lipo drops signatures).
+while IFS= read -r -d '' file; do
+    relative="${file#"$python"/}"
+    twin="$staging/python-x86_64/python/$relative"
+    if /usr/bin/lipo -info "$file" >/dev/null 2>&1; then
+        if [[ -f "$twin" ]] && [[ "$(/usr/bin/lipo -archs "$file")" == arm64 ]]; then
+            /usr/bin/lipo -create "$file" "$twin" -output "$file.universal"
+            mv "$file.universal" "$file"
+        fi
+        /usr/bin/codesign --force --sign - "$file" 2>/dev/null
+    fi
+done < <(find "$python" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0)
+rm -rf "$staging/python-arm64" "$staging/python-x86_64"
+# Precompile now: the app is signed, so nothing may be written into it at run time.
+"$python/bin/python3" -m compileall -q -j 0 "$python/lib/python3.12" >/dev/null
 /usr/bin/codesign --force --sign - "$app"
 
 if [[ -e 'Lazy Remote.app' ]]; then

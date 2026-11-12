@@ -3,6 +3,7 @@
 /*.app/
 /dist/
 /build/
+/.cache/
 /input_helper
 /.launcher-build.*/
 /.helper-build-*/

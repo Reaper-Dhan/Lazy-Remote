@@ -61,11 +61,17 @@ private final class Launcher: ObservableObject {
         }
     }
 
-    /// Prefer Apple's Python: only an administrator can change it, and the server
-    /// runs with this app's Accessibility access. /usr/bin/python3 is only a stub
-    /// until the Command Line Tools are installed, so check for those first.
-    /// Homebrew's Python is the fallback for Macs without them.
+    /// The app ships its own Python (Contents/Resources/python), signed with the app,
+    /// so no developer tools are needed. Apple's Python is the fallback for a
+    /// development build; /usr/bin/python3 is only a stub until the Command Line
+    /// Tools are installed, so check for those first. Homebrew comes last because
+    /// any program running as the user can replace it, and the server runs with
+    /// this app's Accessibility access.
     private static func python() -> String? {
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("python/bin/python3").path,
+           FileManager.default.isExecutableFile(atPath: bundled) {
+            return bundled
+        }
         let tools = Process()
         tools.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
         tools.arguments = ["-p"]
