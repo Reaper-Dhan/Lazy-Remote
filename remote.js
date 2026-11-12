@@ -376,7 +376,14 @@ function enqueue(commands, message = '') {
     command,
     message: index === commands.length - 1 ? message : ''
   }));
+  drainCommands();
   return true;
+}
+
+function drainCommands() {
+  if (!ready || busy || motionInFlight || document.hidden || !pending.length) return;
+  const next = pending.shift();
+  sendCommand(next.command, next.message);
 }
 
 async function sendCommand(command, message) {
@@ -394,8 +401,6 @@ async function sendCommand(command, message) {
     } else if (response.status === 503) {
       showOffline(response.error);
     } else {
-      pending.length = 0;
-      dragPending = false;
       showToast(response.error || 'Command failed.');
     }
   } catch {
@@ -404,6 +409,7 @@ async function sendCommand(command, message) {
     if (command.action === 'drag') dragPending = false;
     busy = false;
     if (!paired || started !== revision) checkConnection();
+    else drainCommands();
   }
 }
 
@@ -434,16 +440,14 @@ async function sendMotion(dx, dy) {
   } finally {
     motionInFlight--;
     if (!paired || started !== revision) checkConnection();
+    else drainCommands();
   }
 }
 
 function flushLoop(timestamp) {
   if (ready && !busy && !document.hidden) {
     if (pending.length) {
-      if (motionInFlight === 0) {
-        const next = pending.shift();
-        sendCommand(next.command, next.message);
-      }
+      drainCommands();
     } else if (timestamp - lastMotionFrame >= 15) {
       const hasMovement = Math.abs(accumDx) >= 0.4 || Math.abs(accumDy) >= 0.4;
       if ((hasMovement && motionInFlight < 4) || (!hasMovement && motionInFlight === 0)) {
