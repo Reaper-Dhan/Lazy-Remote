@@ -193,6 +193,15 @@ class CertificateTests(unittest.TestCase):
             self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
             self.assertEqual((directory / "version").read_text(), str(tls_setup.IDENTITY_VERSION))
 
+    @unittest.skipUnless(os.name == "nt", "Windows folder permissions")
+    def test_windows_state_folder_is_private(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = tls_setup.private_state_dir(Path(temporary) / "state")
+            listing = subprocess.run(["icacls", str(state)], capture_output=True, text=True).stdout
+            self.assertIn(os.environ["USERNAME"], listing)
+            for broad in ("BUILTIN\\Users", "Everyone", "Authenticated Users"):
+                self.assertNotIn(broad, listing)
+
     def test_identities_without_constraints_are_replaced(self):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary) / "tls"

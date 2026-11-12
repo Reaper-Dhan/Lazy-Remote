@@ -206,12 +206,30 @@ def _remove_tree(path):
         time.sleep(0.1 * (attempt + 1))
 
 
+def _restrict_windows_folder(path):
+    """Give only this user (and SYSTEM) access, like chmod 700 on macOS and Linux."""
+    user = os.environ.get("USERNAME")
+    if not user:
+        return
+    domain = os.environ.get("USERDOMAIN")
+    account = f"{domain}\\{user}" if domain else user
+    subprocess.run(
+        ["icacls", str(path), "/inheritance:r",
+         "/grant:r", f"{account}:(OI)(CI)F", "/grant:r", "*S-1-5-18:(OI)(CI)F"],
+        capture_output=True, timeout=10,
+    )
+
+
 def private_state_dir(state_dir):
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     if state_dir.is_symlink():
         raise RuntimeError(f"Lazy Remote storage must be a private directory owned by you: {state_dir}")
-    if not IS_WINDOWS:
-        # On Windows the folder inherits the user profile's private ACL instead.
+    if IS_WINDOWS:
+        try:
+            _restrict_windows_folder(state_dir)
+        except (OSError, subprocess.SubprocessError):
+            pass  # The folder still has the user profile's private permissions.
+    else:
         info = state_dir.lstat()
         if info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise RuntimeError(f"Lazy Remote storage must be a private directory owned by you: {state_dir}")
