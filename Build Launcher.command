@@ -32,9 +32,30 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-/usr/bin/swiftc -target "$(/usr/bin/uname -m)-apple-macos13.0" -swift-version 5 -parse-as-library \
-    -O Launcher.swift -o "$app/Contents/MacOS/LazyRemote"
+
+# Build one binary that runs on both Apple Silicon and Intel Macs.
+universal() {
+    local output="$1"
+    shift
+    for arch in arm64 x86_64; do
+        # SWIFTC_FLAGS lets a sandboxed shell pass -disable-sandbox; normal builds leave it empty.
+        /usr/bin/swiftc ${SWIFTC_FLAGS:-} -target "$arch-apple-macos13.0" -swift-version 5 -O "$@" -o "$staging/$arch.bin"
+    done
+    /usr/bin/lipo -create "$staging/arm64.bin" "$staging/x86_64.bin" -output "$output"
+    rm -f "$staging/arm64.bin" "$staging/x86_64.bin"
+}
+
+universal "$app/Contents/MacOS/LazyRemote" -parse-as-library Launcher.swift
+
+# Everything the server needs ships inside the app, so users only download the app.
+server="$app/Contents/Resources/server"
+mkdir -p "$server/assets"
+cp auth.py platform_support.py server.py tls_setup.py index.html remote.js remote.css "$server/"
+cp assets/logo.svg assets/touch-icon.png "$server/assets/"
+universal "$server/input_helper" input_helper.swift
+/usr/bin/codesign --force --sign - --identifier local.couch-remote.input-helper "$server/input_helper"
 /usr/bin/codesign --force --sign - "$app"
+
 if [[ -e 'Lazy Remote.app' ]]; then
     mv 'Lazy Remote.app' "$staging/previous.app"
 fi
