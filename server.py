@@ -401,9 +401,11 @@ class Remote:
                 if shortcut is None:
                     raise RequestError(400, "That three-finger swipe is disabled on the Mac.")
                 command = {"action": "shortcut", **shortcut}
+            if command["action"] == "click":
+                self.release_drag()
             if not self.bridge.send(command):
                 self.release_drag()
-                raise RequestError(503, "Allow Accessibility access on the Mac to use the controls.")
+                raise RequestError(503, PERMISSION_MESSAGE)
             if stream is not None:
                 self.motion_streams[stream] = (seq, x, y)
             self.last_command = self.last_phone_activity = time.monotonic()
@@ -515,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
     def host(self):
         values = self.headers.get_all("Host", [])
         if len(values) != 1 or values[0].lower() not in self.server.hosts:
-            raise RequestError(421, "Open the HTTPS address shown on the Mac.")
+            raise RequestError(421, f"Open the HTTPS address shown on the {HOST_NAME}.")
         return values[0].lower()
 
     def token(self, name=COOKIE):
@@ -638,13 +640,36 @@ def local_controls(remote, stop, launcher):
         stop.set()
 
 
+def open_input(launcher):
+    if IS_MAC:
+        return InputBridge(request_access=not launcher)
+    import input_backends
+    return LocalInput(input_backends.create())
+
+
+class LocalInput:
+    """In-process mouse and keyboard output for Windows and Linux."""
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    def send(self, command):
+        try:
+            return self.backend.send(command)
+        except (OSError, ValueError):
+            raise RequestError(503, f"The {HOST_NAME} input helper is unavailable. Try again.") from None
+
+    def close(self):
+        self.backend.close()
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Control this Mac from one paired browser over HTTPS.")
-    parser.add_argument("--renew-certificate", action="store_true", help="Replace this Mac's HTTPS identity.")
+    parser = argparse.ArgumentParser(description="Control this computer from one paired browser over HTTPS.")
+    parser.add_argument("--renew-certificate", action="store_true", help="Replace this computer's HTTPS identity.")
     parser.add_argument("--launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if os.geteuid() == 0:
-        sys.exit("Start Lazy Remote from your Mac user account without sudo.")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        sys.exit("Start Lazy Remote from your user account without sudo.")
     server = bridge = worker = instance = None
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -662,10 +687,10 @@ def main():
             raise RuntimeError("Lazy Remote is already running. Stop the other instance first.") from None
         context, directory, names, fingerprint = tls_identity(address, hostname, args.renew_certificate, state)
         server.configure_tls(context, names)
-        bridge = InputBridge(request_access=not args.launcher)
+        bridge = open_input(args.launcher)
         remote = server.remote = Remote(
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
-            gesture_reader=mac_gesture_settings,
+            gesture_reader=mac_gesture_settings if IS_MAC else None,
         )
         code = remote.new_code(publish=False)
         urls = [f"https://{host}/" for host in sorted(server.hosts, key=lambda host: ".local" not in host)]
@@ -680,8 +705,8 @@ def main():
             for url in urls:
                 print(f"  {url}")
             if loopback:
-                print("No private network address found. This launch is available on the Mac only.")
-            print(f"Transfer the trust profile to your phone from Finder:\n  {directory}")
+                print(f"No private network address found. This launch is available on the {HOST_NAME} only.")
+            print(f"Transfer the trust profile to your phone from this folder:\n  {directory}")
             print(f"Local root SHA-256 fingerprint: {fingerprint}")
             print(f"Pairing code (one use, 10 minutes)  {code}", flush=True)
             if sys.stdin.isatty():

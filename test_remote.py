@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 from pathlib import Path
 import plistlib
 import ssl
@@ -248,6 +249,19 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.bridge.commands, [hold, release, hold, release])
         self.assertEqual(self.request("/api/cmd", hold, cookie=cookie)[0], 401)
 
+    def test_click_releases_an_active_drag_before_sending_mouse_button(self):
+        cookie = self.pair().split(";", 1)[0]
+        hold = {"action": "drag", "active": True}
+        release = {"action": "drag", "active": False}
+        left = {"action": "click", "button": "left", "count": 1}
+        right = {"action": "click", "button": "right", "count": 1}
+        for click in (left, right):
+            self.assertEqual(self.request("/api/cmd", hold, cookie=cookie)[0], 200)
+            status, _, body = self.request("/api/cmd", click, cookie=cookie)
+            self.assertEqual(status, 200)
+            self.assertFalse(json.loads(body)["dragging"])
+        self.assertEqual(self.bridge.commands, [hold, release, left, hold, release, right])
+
     def test_qr_requires_matching_local_approval(self):
         qr = self.remote.snapshot()["qr"]
         pending = self.begin({"qr": qr, "remember": False})
@@ -290,7 +304,8 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertIn("Secure; HttpOnly; SameSite=Strict", device_header)
         device = device_header.split(";", 1)[0]
         self.assertNotIn(device.split("=", 1)[1], self.browser_path.read_text())
-        self.assertEqual(stat.S_IMODE(self.browser_path.stat().st_mode), 0o600)
+        if os.name != "nt":  # Windows has no POSIX file modes.
+            self.assertEqual(stat.S_IMODE(self.browser_path.stat().st_mode), 0o600)
 
         self.remote = self.server.remote = Remote(self.bridge, self.browser_path)
         self.remote.new_code()
@@ -317,8 +332,9 @@ class RemoteSecurityTests(unittest.TestCase):
             state = Path(temporary) / "tls"
             _, path, names, fingerprint = tls_identity("192.168.1.2", "couch.local", False, state)
             self.assertEqual(names, ["192.168.1.2", "couch.local"])
-            self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
-            self.assertEqual(stat.S_IMODE((path / "server.key").stat().st_mode), 0o600)
+            if os.name != "nt":  # Windows has no POSIX file modes.
+                self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE((path / "server.key").stat().st_mode), 0o600)
             profile = plistlib.loads((path / "Lazy Remote.mobileconfig").read_bytes())
             self.assertEqual(profile["PayloadContent"][0]["PayloadContent"],
                              (path / "Lazy Remote Root.cer").read_bytes())
