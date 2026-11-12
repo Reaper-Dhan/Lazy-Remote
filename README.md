@@ -20,11 +20,11 @@ You only need the app. No repo, no Terminal. Get it from the [Releases page](htt
 | Windows | `Lazy-Remote-Windows.zip` | Unzip and run **Lazy Remote.exe**. If SmartScreen appears, click **More info → Run anyway**. When the firewall asks, allow **Private networks** only. |
 | Linux | `Lazy-Remote-Linux-x86_64.tar.gz` | Extract and run `./lazy-remote`. The setup guide gives a one-time command that lets it use `/dev/uinput`. |
 
-The apps aren’t signed by Apple or Microsoft, so the system warns once.
+The apps aren’t signed by Apple or Microsoft, so the system warns once. Each release includes `SHA256SUMS.txt`; check your download against it before you open the app (`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`, or `Get-FileHash` in PowerShell). Ignore the **Source code** files that GitHub adds to every release.
 
 Click **Start server**. The **Setup guide** opens on first launch and walks you through the rest: input access, trusting this computer on your phone, and pairing.
 
-Everything ships inside the app. The Mac app uses the Python 3 built into macOS; if macOS offers to install the Command Line Tools on first start, accept it. The Windows and Linux apps include their own Python.
+Everything ships inside the app. The Mac app uses the Python 3 built into macOS. If the Command Line Tools aren’t installed, it uses Homebrew’s Python, or asks you to run `xcode-select --install`. The Windows and Linux apps include their own Python.
 
 Connect your computer and phone to the same private Wi-Fi network.
 
@@ -71,10 +71,11 @@ Safari may intercept three-finger swipes for iOS editing. Turn on **More → Two
 - The server listens on one private IPv4 address. Use Lazy Remote on a network you trust and keep its port off the public internet.
 - Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the Mac.
 - **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the Mac.
-- Checking notifications or switching tabs pauses input. The session locks after **5 minutes** without control input, and the server shuts down after **30 minutes** without an approved connection or successful control command. Use **Lock remote** or **Stop server** to end access immediately.
+- Checking notifications or switching tabs pauses input. The session locks after **5 minutes** without control input, and the server shuts down after **30 minutes** without an approved connection or successful control command. Turn on **Keep running when the phone is idle** in the launcher to skip the 30-minute stop; the 5-minute lock still applies. Use **Lock remote** or **Stop server** to end access immediately.
 - An active session can type and click in the current Mac app. Treat the approved phone as a keyboard and trackpad with access to your Mac.
-- The computer generates its own HTTPS identity. Share only the public profile or certificate shown in the launcher. The root signing key is discarded after generation, and the server key stays in the user’s private application data (`~/Library/Application Support/Lazy Remote`, `%LOCALAPPDATA%\Lazy Remote`, or `~/.local/share/lazy-remote`).
-- On Windows, the remote can’t control apps running as administrator. On Linux, the virtual input device also reaches the lock screen, so stop the server when you step away.
+- The computer generates its own HTTPS identity. Share only the public profile or certificate shown in the launcher. The root signing key is discarded after generation, and the root may only vouch for `.local` names, so it can’t be used to impersonate a real website. The server key stays in the user’s private application data (`~/Library/Application Support/Lazy Remote`, `%LOCALAPPDATA%\Lazy Remote`, or `~/.local/share/lazy-remote`), which is limited to your account on every system.
+- **Upgrading from an earlier version** creates a new certificate once, to add the `.local` limit. Install the new profile or certificate on your phone and remove the old one.
+- On Windows, the remote can’t control apps running as administrator. On Linux, the virtual input device could reach the lock screen, so Lazy Remote sends nothing while the desktop session is locked.
 
 If you discover a security issue, use GitHub’s private vulnerability reporting if it’s available. For ordinary bug reports, include your macOS version, browser, and steps to reproduce. Keep pairing codes, certificate files, and device addresses out of public reports.
 
@@ -105,7 +106,7 @@ python -m pip install -r packaging/requirements.txt
 python packaging/build_desktop.py
 ```
 
-**Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) runs the tests on all three systems and builds all three apps on every push. Push a tag such as `v1.1.0` and it attaches the three downloads to a GitHub release.
+**Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) runs the tests on all three systems and builds all three apps on every push. Push a tag such as `v1.2.0` and it publishes a release with the three downloads, `SHA256SUMS.txt`, and the notes in [packaging/release-notes.md](packaging/release-notes.md). Actions are pinned to commit hashes and bundled packages to exact versions in [packaging/requirements.txt](packaging/requirements.txt).
 
 The tests use temporary certificates and substitute input devices, so they can run without moving your cursor or typing.
 
