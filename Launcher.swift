@@ -57,6 +57,24 @@ private final class Launcher: ObservableObject {
         }
     }
 
+    /// Prefer Apple's Python: only an administrator can change it, and the server
+    /// runs with this app's Accessibility access. /usr/bin/python3 is only a stub
+    /// until the Command Line Tools are installed, so check for those first.
+    /// Homebrew's Python is the fallback for Macs without them.
+    private static func python() -> String? {
+        let tools = Process()
+        tools.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        tools.arguments = ["-p"]
+        tools.standardOutput = FileHandle.nullDevice
+        tools.standardError = FileHandle.nullDevice
+        if (try? tools.run()) != nil {
+            tools.waitUntilExit()
+            if tools.terminationStatus == 0 { return "/usr/bin/python3" }
+        }
+        return ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
     /// The phone files, found by type so certificates from Couch Remote still work.
     func certificateFile(_ fileExtension: String) -> URL? {
         guard let certificates else { return nil }
@@ -73,9 +91,8 @@ private final class Launcher: ObservableObject {
             return
         }
         let script = project.appendingPathComponent("server.py")
-        let interpreters = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
-        guard let python = interpreters.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            notice = "Install Python 3 to start Lazy Remote."
+        guard let python = Self.python() else {
+            notice = "Install Python 3 to start Lazy Remote. Run xcode-select --install in Terminal."
             return
         }
 
