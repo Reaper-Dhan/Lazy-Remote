@@ -234,7 +234,7 @@ async function checkConnection() {
       updateGestureSettings(status.gestures);
       renderState(status.ready ? 'ready' : 'permission', status.ready
         ? 'Connected securely'
-        : 'Open Accessibility settings from Couch Remote on the computer.');
+        : 'Open Accessibility settings from Lazy Remote on the computer.');
       if (!busy && !motionInFlight) {
         updateDrag(status.dragging);
         if (releaseDragOnResume && status.ready && status.dragging) {

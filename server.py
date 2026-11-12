@@ -420,7 +420,7 @@ class RemoteServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "CouchRemote"
+    server_version = "LazyRemote"
     sys_version = ""
     disable_nagle_algorithm = True
 
@@ -591,7 +591,7 @@ def main():
     parser.add_argument("--launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if os.geteuid() == 0:
-        sys.exit("Start Couch Remote from your Mac user account without sudo.")
+        sys.exit("Start Lazy Remote from your Mac user account without sudo.")
     server = bridge = worker = instance = None
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -606,7 +606,7 @@ def main():
         try:
             fcntl.flock(instance, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise RuntimeError("Couch Remote is already running. Stop the other instance first.") from None
+            raise RuntimeError("Lazy Remote is already running. Stop the other instance first.") from None
         context, directory, names, fingerprint = tls_identity(address, hostname, args.renew_certificate, state)
         server.configure_tls(context, names)
         bridge = InputBridge(request_access=not args.launcher)
@@ -623,7 +623,7 @@ def main():
                 input_ready=remote.input_permission(), **remote.snapshot()
             )
         else:
-            print("Couch Remote is running. Open one of these HTTPS addresses on your phone:")
+            print("Lazy Remote is running. Open one of these HTTPS addresses on your phone:")
             for url in urls:
                 print(f"  {url}")
             if loopback:
@@ -645,7 +645,7 @@ def main():
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         if args.launcher:
             launcher_event("notice", message=str(error))
-        sys.exit(f"Couch Remote could not start: {error}")
+        sys.exit(f"Lazy Remote could not start: {error}")
     finally:
         stop.set()
         if server:

@@ -120,7 +120,7 @@ class Pairing:
         if self.pending:
             raise RequestError(409, "A request is already waiting for approval on the computer.")
         if not self.code:
-            raise RequestError(409, "Get a fresh QR code or pairing code from Couch Remote on the computer.")
+            raise RequestError(409, "Get a fresh QR code or pairing code from Lazy Remote on the computer.")
 
         remember = body.get("remember", False)
         methods = body.keys() - {"remember"}

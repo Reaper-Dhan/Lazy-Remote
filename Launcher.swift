@@ -49,12 +49,12 @@ private final class Launcher: ObservableObject {
         let project = Bundle.main.bundleURL.deletingLastPathComponent()
         let script = project.appendingPathComponent("server.py")
         guard FileManager.default.fileExists(atPath: script.path) else {
-            notice = "Keep Couch Remote.app in the same folder as server.py."
+            notice = "Keep Lazy Remote.app in the same folder as server.py."
             return
         }
         let interpreters = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
         guard let python = interpreters.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            notice = "Install Python 3 to start Couch Remote."
+            notice = "Install Python 3 to start Lazy Remote."
             return
         }
 
@@ -71,7 +71,7 @@ private final class Launcher: ObservableObject {
         do {
             try server.run()
         } catch {
-            notice = "Could not start Couch Remote. \(error.localizedDescription)"
+            notice = "Could not start Lazy Remote. \(error.localizedDescription)"
             return
         }
 
@@ -222,7 +222,7 @@ private struct LauncherView: View {
                     .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Couch Remote").font(.title2.bold())
+                    Text("Lazy Remote").font(.title2.bold())
                     Text(status).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -370,12 +370,12 @@ private final class LauncherDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct CouchRemoteApp: App {
+struct LazyRemoteApp: App {
     @NSApplicationDelegateAdaptor(LauncherDelegate.self) private var delegate
     @StateObject private var launcher = Launcher()
 
     var body: some Scene {
-        Window("Couch Remote", id: "launcher") {
+        Window("Lazy Remote", id: "launcher") {
             LauncherView(launcher: launcher)
         }
         .windowResizability(.contentSize)

@@ -11,7 +11,12 @@ import tempfile
 import uuid
 
 
-STATE_DIR = Path.home() / "Library" / "Application Support" / "Couch Remote"
+APP_SUPPORT = Path.home() / "Library" / "Application Support"
+STATE_DIR = APP_SUPPORT / "Lazy Remote"
+LEGACY_STATE_DIR = APP_SUPPORT / "Couch Remote"
+# Preserve the existing HTTPS identity and browser trust when upgrading.
+if not STATE_DIR.exists() and LEGACY_STATE_DIR.exists():
+    STATE_DIR = LEGACY_STATE_DIR
 OPENSSL = "/usr/bin/openssl"
 LAN_NETWORKS = tuple(
     ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
@@ -70,7 +75,7 @@ def make_identity(directory, names):
     root_key = openssl("genrsa", "2048", cwd=directory)
     openssl(
         "req", "-new", "-x509", "-sha256", "-days", "365", "-key", "/dev/stdin",
-        "-subj", "/CN=Couch Remote Local Root", "-out", "root.pem",
+        "-subj", "/CN=Lazy Remote Local Root", "-out", "root.pem",
         "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
         "-addext", "subjectKeyIdentifier=hash",
@@ -78,7 +83,7 @@ def make_identity(directory, names):
     )
     openssl(
         "req", "-new", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-subj", "/CN=Couch Remote", "-keyout", "server.key", "-out", "server.csr",
+        "-subj", "/CN=Lazy Remote", "-keyout", "server.key", "-out", "server.csr",
         cwd=directory,
     )
     alternatives = ",".join(f"{'DNS' if name.endswith('.local') else 'IP'}:{name}" for name in names)
@@ -103,31 +108,31 @@ def make_identity(directory, names):
     (directory / "server.key").chmod(0o600)
     (directory / "names").write_text("\n".join(names), encoding="ascii")
     root_der = ssl.PEM_cert_to_DER_cert((directory / "root.pem").read_text(encoding="ascii"))
-    (directory / "Couch Remote Root.cer").write_bytes(root_der)
+    (directory / "Lazy Remote Root.cer").write_bytes(root_der)
     profile = {
         "PayloadType": "Configuration",
         "PayloadVersion": 1,
         "PayloadIdentifier": "local.couch-remote",
         "PayloadUUID": str(uuid.uuid4()),
-        "PayloadDisplayName": "Couch Remote",
+        "PayloadDisplayName": "Lazy Remote",
         "PayloadContent": [{
             "PayloadType": "com.apple.security.root",
             "PayloadVersion": 1,
             "PayloadIdentifier": "local.couch-remote.root",
             "PayloadUUID": str(uuid.uuid4()),
-            "PayloadDisplayName": "Couch Remote Local Root",
-            "PayloadCertificateFileName": "Couch Remote Root.cer",
+            "PayloadDisplayName": "Lazy Remote Local Root",
+            "PayloadCertificateFileName": "Lazy Remote Root.cer",
             "PayloadContent": root_der,
         }],
     }
-    (directory / "Couch Remote.mobileconfig").write_bytes(plistlib.dumps(profile))
+    (directory / "Lazy Remote.mobileconfig").write_bytes(plistlib.dumps(profile))
 
 
 def private_state_dir(state_dir):
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     info = state_dir.lstat()
     if state_dir.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise RuntimeError(f"Couch Remote storage must be a private directory owned by you: {state_dir}")
+        raise RuntimeError(f"Lazy Remote storage must be a private directory owned by you: {state_dir}")
     return state_dir.resolve()
 
 

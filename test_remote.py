@@ -291,9 +291,9 @@ class RemoteSecurityTests(unittest.TestCase):
             self.assertEqual(names, ["192.168.1.2", "couch.local"])
             self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE((path / "server.key").stat().st_mode), 0o600)
-            profile = plistlib.loads((path / "Couch Remote.mobileconfig").read_bytes())
+            profile = plistlib.loads((path / "Lazy Remote.mobileconfig").read_bytes())
             self.assertEqual(profile["PayloadContent"][0]["PayloadContent"],
-                             (path / "Couch Remote Root.cer").read_bytes())
+                             (path / "Lazy Remote Root.cer").read_bytes())
             self.assertEqual(tls_identity("192.168.1.3", "couch.local", False, state)[2:],
                              (["couch.local"], fingerprint))
             previous = path.resolve()
