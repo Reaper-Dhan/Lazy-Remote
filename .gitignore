@@ -1,0 +1,25 @@
+# macOS and generated application builds
+.DS_Store
+/*.app/
+/input_helper
+/.launcher-build.*/
+/.helper-build-*/
+/.build-*/
+
+# Python and local environment
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+
+# Machine-local identities and browser state
+*.pem
+*.key
+*.cer
+*.crt
+*.csr
+*.mobileconfig
+*.p12
+*.pfx
+/browser.json
