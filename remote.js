@@ -86,7 +86,7 @@ const pending = [];
 const foregroundRequests = new Set();
 const gestures = {
   tap: true, secondary_tap: true, scroll: true, horizontal_scroll: true,
-  natural_scroll: true, pinch_zoom: false, three_finger_drag: false
+  natural_scroll: true, pinch_zoom: false, three_finger_drag: false, swipes: []
 };
 
 function updateGestureSettings(settings) {
@@ -97,6 +97,10 @@ function updateGestureSettings(settings) {
   if (gestures.secondary_tap) hints.push('Two-finger tap for right-click');
   if (gestures.pinch_zoom) hints.push('Pinch to zoom in supported apps');
   if (gestures.three_finger_drag) hints.push('Three-finger drag');
+  if (gestures.swipes.length) hints.push('Three-finger swipes');
+  for (const button of drawer.querySelectorAll('[data-swipe]')) {
+    button.hidden = !gestures.swipes.includes(button.dataset.key);
+  }
   const hint = hints.join(' · ');
   if (gestureHint.textContent !== hint) gestureHint.textContent = hint;
   scrollStrip.hidden = !gestures.scroll;
@@ -654,9 +658,22 @@ trackpad.addEventListener('touchmove', event => {
     } else if (touchGesture.mode === 'scroll') {
       addScroll(dx * 2.2, dy * 2.2);
     }
-  } else if (sample.count === 3 && gestures.three_finger_drag) {
-    startGestureDrag();
-    if (gestureDrag || dragLocked) addMovement(dx, dy);
+  } else if (sample.count === 3) {
+    if (gestures.three_finger_drag) {
+      startGestureDrag();
+      if (gestureDrag || dragLocked) addMovement(dx, dy);
+    } else if (!touchGesture.mode && !dragLocked && !dragPending) {
+      const x = sample.x - touchGesture.origin.x;
+      const y = sample.y - touchGesture.origin.y;
+      const horizontal = Math.abs(x) >= 42 && Math.abs(x) > Math.abs(y) * 1.35;
+      const vertical = Math.abs(y) >= 42 && Math.abs(y) > Math.abs(x) * 1.35;
+      const swipe = horizontal ? (x < 0 ? 'swipe_left' : 'swipe_right')
+        : vertical ? (y < 0 ? 'swipe_up' : 'swipe_down') : null;
+      if (swipe && gestures.swipes.includes(swipe)) {
+        touchGesture.mode = 'swipe';
+        sendKey(swipe);
+      }
+    }
   }
 }, { passive: false });
 
