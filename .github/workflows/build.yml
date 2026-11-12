@@ -1,0 +1,75 @@
+name: Test and build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The Windows and Linux apps bundle these; the Mac app uses the system OpenSSL.
+      - if: runner.os != 'macOS'
+        run: python -m pip install cryptography qrcode
+      - run: python -B -m unittest -v test_platform test_remote
+      - if: runner.os == 'Linux'
+        run: node --test test_remote_js.cjs
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Lazy-Remote-Windows
+          - os: ubuntu-22.04  # older glibc, so the binary runs on more distributions
+            artifact: Lazy-Remote-Linux
+          - os: macos-latest
+            artifact: Lazy-Remote-macOS
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os != 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - if: runner.os != 'macOS'
+        run: |
+          python -m pip install -r packaging/requirements.txt
+          python packaging/build_desktop.py
+      - if: runner.os == 'macOS'
+        run: ./"Build Launcher.command"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --generate-notes
