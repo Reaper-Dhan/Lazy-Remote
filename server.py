@@ -40,14 +40,23 @@ MAX_DELTA = 16384
 MOTION_POSITION_LIMIT = 2 ** 32
 DEFAULT_GESTURES = {
     "tap": True, "secondary_tap": True, "scroll": True, "horizontal_scroll": True,
-    "natural_scroll": True, "pinch_zoom": False, "three_finger_drag": False,
+    "natural_scroll": True, "pinch_zoom": False, "three_finger_drag": False, "swipes": {},
 }
+# A leftward swipe reveals the Space to the right, and vice versa.
+SWIPE_SHORTCUTS = {
+    "swipe_left": ("81", 124, "Horiz"),
+    "swipe_right": ("79", 123, "Horiz"),
+    "swipe_up": ("32", 126, "Vert"),
+    "swipe_down": ("33", 125, "Vert"),
+}
+CONTROL_FLAG = 1 << 18
+KEYBOARD_FLAGS = sum(1 << bit for bit in (16, 17, 18, 19, 20, 21, 23))
 KEYS = set("""
     space enter backspace escape tab up down left right f m c k j l close_tab
     reopen_tab next_tab prev_tab new_tab refresh fullscreen_mac next_video
     prev_video skip_intro cmd_left cmd_right zoom_in zoom_out zoom_reset
     vol_up vol_down vol_mute media_play bright_up bright_down
-""".split())
+""".split()) | SWIPE_SHORTCUTS.keys()
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/remote.js": ("remote.js", "text/javascript; charset=utf-8"),
@@ -55,18 +64,44 @@ ASSETS = {
 }
 
 
-def mac_gesture_settings():
-    settings = {}
-    for domain in ("com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"):
-        try:
-            exported = plistlib.loads(subprocess.check_output(
-                ["/usr/bin/defaults", "export", domain, "-"], stderr=subprocess.DEVNULL, timeout=1
-            ))
-            if isinstance(exported, dict) and exported:
-                settings = exported
-                break
-        except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError):
+def mac_preferences(domain):
+    try:
+        exported = plistlib.loads(subprocess.check_output(
+            ["/usr/bin/defaults", "export", domain, "-"], stderr=subprocess.DEVNULL, timeout=1
+        ))
+        return exported if isinstance(exported, dict) else {}
+    except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError):
+        return {}
+
+
+def three_finger_shortcuts(settings, hotkeys):
+    if settings.get("TrackpadThreeFingerDrag") or not isinstance(hotkeys, dict):
+        return {}
+    shortcuts = {}
+    for name, (identifier, default_key, axis) in SWIPE_SHORTCUTS.items():
+        if settings.get(f"TrackpadThreeFinger{axis}SwipeGesture") != 2:
             continue
+        entry = hotkeys.get(identifier, {})
+        if not isinstance(entry, dict) or not entry.get("enabled", True):
+            continue
+        value = entry.get("value", {})
+        if not isinstance(value, dict) or value.get("type", "standard") != "standard":
+            continue
+        parameters = value.get("parameters", [65535, default_key, CONTROL_FLAG])
+        if not isinstance(parameters, list) or len(parameters) != 3:
+            continue
+        _, key_code, flags = parameters
+        if (type(key_code) is int and 0 <= key_code <= 127 and
+                type(flags) is int and flags >= 0 and flags & ~KEYBOARD_FLAGS == 0):
+            shortcuts[name] = {"key_code": key_code, "flags": flags}
+    return shortcuts
+
+
+def mac_gesture_settings():
+    settings = mac_preferences("com.apple.AppleMultitouchTrackpad") or mac_preferences(
+        "com.apple.driver.AppleBluetoothMultitouch.trackpad"
+    )
+    hotkeys = mac_preferences("com.apple.symbolichotkeys").get("AppleSymbolicHotKeys", {})
     try:
         direction = subprocess.check_output(
             ["/usr/bin/defaults", "read", "-g", "com.apple.swipescrolldirection"],
@@ -83,6 +118,7 @@ def mac_gesture_settings():
         "natural_scroll": direction not in ("0", "false", "no"),
         "pinch_zoom": bool(settings.get("TrackpadPinch", DEFAULT_GESTURES["pinch_zoom"])),
         "three_finger_drag": bool(settings.get("TrackpadThreeFingerDrag", DEFAULT_GESTURES["three_finger_drag"])),
+        "swipes": three_finger_shortcuts(settings, hotkeys),
     }
 
 
@@ -304,7 +340,8 @@ class Remote:
                     "approved": bool(pending and pending.approved),
                 }
             ready = self.bridge.send({"action": "check_perm"})
-            return 200, {"ready": ready, "dragging": bool(self.drag_until), "gestures": self.gestures}
+            gestures = {**self.gestures, "swipes": list(self.gestures["swipes"])}
+            return 200, {"ready": ready, "dragging": bool(self.drag_until), "gestures": gestures}
 
     def input_permission(self):
         with self.lock:
@@ -348,6 +385,11 @@ class Remote:
                     "dx": max(-MAX_DELTA, min(MAX_DELTA, x - previous_x)),
                     "dy": max(-MAX_DELTA, min(MAX_DELTA, y - previous_y)),
                 }
+            elif command["action"] == "key" and command["name"] in SWIPE_SHORTCUTS:
+                shortcut = self.gestures["swipes"].get(command["name"])
+                if shortcut is None:
+                    raise RequestError(400, "That three-finger swipe is disabled on the Mac.")
+                command = {"action": "shortcut", **shortcut}
             if not self.bridge.send(command):
                 self.release_drag()
                 raise RequestError(503, "Allow Accessibility access on the Mac to use the controls.")

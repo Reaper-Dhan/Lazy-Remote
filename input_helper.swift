@@ -205,6 +205,10 @@ while let line = readLine() {
         let dx = Int32((json["dx"] as? NSNumber)?.intValue ?? 0)
         let dy = Int32((json["dy"] as? NSNumber)?.intValue ?? 0)
         scrollMouse(dx: dx, dy: dy)
+    case "shortcut":
+        if let code = json["key_code"] as? UInt16, let flags = json["flags"] as? UInt64 {
+            sendKey(keyCode: code, flags: CGEventFlags(rawValue: flags))
+        }
     case "key":
         if let name = json["name"] as? String {
             if name == "vol_up" {
