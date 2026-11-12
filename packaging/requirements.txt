@@ -1,6 +1,7 @@
-# Build-time and bundled packages for the Windows and Linux apps.
+# Build-time and bundled packages for the Windows and Linux apps, pinned so a
+# release cannot silently pick up a new or compromised version.
 # The Mac app needs none of these; it uses the system Python and OpenSSL.
-cryptography>=42
-qrcode>=7.4
-pyinstaller>=6.3
-pillow>=10  # lets PyInstaller turn assets/logo.png into the app icon
+cryptography==50.0.2
+qrcode==8.2
+pyinstaller==6.22.3
+pillow==13.0.0  # lets PyInstaller turn assets/logo.png into the app icon
