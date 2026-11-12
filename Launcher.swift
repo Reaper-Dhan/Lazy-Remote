@@ -136,16 +136,12 @@ private final class Launcher: ObservableObject {
         }
     }
 
-    func openAccessibility() {
+    func openAccessibility(request: Bool = false) {
+        if request { send("request_input_access") }
         let settings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         if !NSWorkspace.shared.open(settings) {
             notice = "Open System Settings → Privacy & Security → Accessibility or Device Control and Data Access."
         }
-    }
-
-    func showCertificates() {
-        guard let certificates else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: certificates, isDirectory: true))
     }
 
     func copyAddress() {
@@ -230,10 +226,120 @@ private struct PairingQR: View {
     }
 }
 
+private struct SetupGuide: View {
+    @ObservedObject var launcher: Launcher
+    @Environment(\.dismiss) private var dismiss
+    @State private var phone = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Set up Lazy Remote").font(.title2.bold())
+
+            step(1, "Start the server") {
+                Text(launcher.phase == .running
+                     ? "Running. Keep this window open while you use the remote."
+                     : "Click Start server in the main window. It creates this Mac’s certificate.")
+            }
+
+            step(2, "Allow mouse and keyboard control") {
+                Text("Turn on Lazy Remote in System Settings → Privacy & Security → Accessibility.")
+                Button("Open Accessibility Settings") { launcher.openAccessibility(request: true) }
+            }
+
+            step(3, "Trust this Mac on your phone (once)") {
+                Picker("Phone", selection: $phone) {
+                    Text("iPhone or iPad").tag(0)
+                    Text("Android").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 260)
+
+                if launcher.phase != .running {
+                    Text("Start the server first to create the certificate.").foregroundStyle(.secondary)
+                } else if phone == 0 {
+                    share(launcher.certificateFile("mobileconfig"), label: "Send profile to iPhone…")
+                    numbered([
+                        "Send it with AirDrop to your own iPhone.",
+                        "On the iPhone, open Settings → Profile Downloaded → Install.",
+                        "Open Settings → General → About → Certificate Trust Settings.",
+                        "Turn on Lazy Remote Local Root.",
+                    ])
+                } else {
+                    share(launcher.certificateFile("cer"), label: "Send certificate to Android…")
+                    numbered([
+                        "Send it to your own phone, for example with Quick Share or a USB cable.",
+                        "Open Settings and search for “CA certificate”.",
+                        "Choose Install a certificate → CA certificate, then pick the file.",
+                    ])
+                }
+                if let fingerprint = launcher.fingerprint {
+                    Text("Fingerprint, to check on the phone: \(fingerprint)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("This file is public. Send it only from this Mac to your own phone.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            step(4, "Pair your phone") {
+                Text("Join the same Wi-Fi. Scan the QR code with the phone camera, tap Request access, then click Approve here if the numbers match.")
+            }
+
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 520, alignment: .leading)
+    }
+
+    private func step<Content: View>(_ number: Int, _ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.headline)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.opacity(0.18), in: Circle())
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.headline)
+                content()
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func share(_ file: URL?, label: String) -> some View {
+        if let file {
+            HStack {
+                ShareLink(item: file) { Label(label, systemImage: "square.and.arrow.up") }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+        } else {
+            Text("The certificate file is missing. Stop the server and run it again.")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func numbered(_ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                Text("\(index + 1). \(line)").foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct LauncherView: View {
     @ObservedObject var launcher: Launcher
     @State private var showCode = false
     @State private var copiedAddress: String?
+    @State private var showGuide = false
+    @AppStorage("setupGuideSeen") private var setupGuideSeen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -263,10 +369,14 @@ private struct LauncherView: View {
             case .stopped:
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Control this Mac from your phone.")
-                    Button("Start server", action: launcher.start)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .keyboardShortcut(.defaultAction)
+                    HStack {
+                        Button("Start server", action: launcher.start)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .keyboardShortcut(.defaultAction)
+                        Button("Setup guide") { showGuide = true }
+                            .controlSize(.large)
+                    }
                 }
             case .starting, .stopping:
                 ProgressView().controlSize(.small)
@@ -281,15 +391,22 @@ private struct LauncherView: View {
                 Divider()
                 HStack {
                     if launcher.inputReady == false {
-                        Button("Open Accessibility Settings", action: launcher.openAccessibility)
+                        Button("Open Accessibility Settings") { launcher.openAccessibility(request: true) }
                     }
                     Spacer()
-                    Button("Show phone certificates", action: launcher.showCertificates)
+                    Button("Set up phone") { showGuide = true }
                 }
             }
         }
         .padding(24)
         .frame(width: 540, alignment: .leading)
+        .sheet(isPresented: $showGuide) { SetupGuide(launcher: launcher) }
+        .onAppear {
+            if !setupGuideSeen {
+                setupGuideSeen = true
+                showGuide = true
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             launcher.send("check_access")
         }
