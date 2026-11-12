@@ -27,11 +27,15 @@ const controlSettings = document.getElementById('controlSettings');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const drawer = document.getElementById('drawerBackdrop');
 const drawerTrigger = document.querySelector('[data-drawer="open"]');
+const swipeModeBtn = document.getElementById('swipeModeBtn');
+const swipeModeHint = document.getElementById('swipeModeHint');
 
 let sensitivity = Number(speedSlider.value);
+let twoFingerSwipes = false;
 try {
   const saved = Number(localStorage.getItem('remote_speed'));
   if (saved >= 0.8 && saved <= 4) sensitivity = saved;
+  twoFingerSwipes = localStorage.getItem('remote_two_finger_swipes') === 'true';
 } catch {
   // The remote can run with browser storage disabled.
 }
@@ -90,21 +94,32 @@ const gestures = {
   natural_scroll: true, pinch_zoom: false, three_finger_drag: false, swipes: []
 };
 
+function swipeModeEnabled() {
+  return twoFingerSwipes && gestures.swipes.length > 0;
+}
+
 function updateGestureSettings(settings) {
   Object.assign(gestures, settings);
-  const hints = ['One finger moves the pointer'];
-  if (gestures.tap) hints.push('Tap or double-tap to click');
-  if (gestures.scroll) hints.push('Two-finger scroll');
-  if (gestures.secondary_tap) hints.push('Two-finger tap for right-click');
-  if (gestures.pinch_zoom) hints.push('Pinch to zoom in supported apps');
+  const hints = ['One finger moves the pointer', 'Tap to click', 'Two-finger tap to right-click'];
+  if (swipeModeEnabled()) {
+    hints.push('Two-finger Mac swipes');
+  } else {
+    if (gestures.scroll) hints.push('Two-finger scroll');
+    if (gestures.pinch_zoom) hints.push('Pinch to zoom');
+  }
   if (gestures.three_finger_drag) hints.push('Three-finger drag');
-  if (gestures.swipes.length) hints.push('Three-finger swipes');
+  if (gestures.swipes.length && !swipeModeEnabled()) hints.push('Three-finger swipes');
   for (const button of drawer.querySelectorAll('[data-swipe]')) {
     button.hidden = !gestures.swipes.includes(button.dataset.key);
   }
   const hint = hints.join(' · ');
   if (gestureHint.textContent !== hint) gestureHint.textContent = hint;
   scrollStrip.hidden = !gestures.scroll;
+  swipeModeBtn.hidden = swipeModeHint.hidden = gestures.swipes.length === 0;
+  swipeModeBtn.setAttribute('aria-pressed', String(swipeModeEnabled()));
+  swipeModeHint.textContent = swipeModeEnabled()
+    ? 'On. Swipe with two fingers for Mac shortcuts. Use the Scroll strip to scroll.'
+    : 'Off. Turn this on if iOS intercepts three-finger swipes.';
 }
 
 function showToast(message) {
@@ -486,6 +501,16 @@ document.querySelectorAll('[data-click]').forEach(button => {
   ));
 });
 drawerTrigger.addEventListener('click', () => toggleDrawer(true));
+swipeModeBtn.addEventListener('click', () => {
+  if (!gestures.swipes.length) return;
+  twoFingerSwipes = !twoFingerSwipes;
+  try {
+    localStorage.setItem('remote_two_finger_swipes', String(twoFingerSwipes));
+  } catch {
+    // Keep the preference for this page.
+  }
+  updateGestureSettings();
+});
 drawer.querySelector('[data-drawer="close"]').addEventListener('click', () => toggleDrawer(false));
 drawer.addEventListener('click', event => {
   if (event.target === drawer) toggleDrawer(false);

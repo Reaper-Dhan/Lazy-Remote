@@ -429,6 +429,20 @@ h2 {
 .drawer-header h2 { font-size: 19px; }
 .drawer-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
+.swipe-mode { width: 100%; }
+
+.swipe-mode[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.swipe-mode-hint {
+  margin: 6px 0 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .toast {
   position: fixed;
   top: calc(70px + env(safe-area-inset-top, 0px));
