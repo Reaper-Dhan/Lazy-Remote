@@ -24,6 +24,8 @@ The apps aren’t signed by Apple or Microsoft, so the system warns once. Each r
 
 Click **Start server**. The **Setup guide** opens on first launch and walks you through the rest: input access, trusting this computer on your phone, and pairing.
 
+While the server runs, closing the window keeps the remote going: on a Mac, Lazy Remote stays in the menu bar; on Windows and Linux, it asks whether to minimize. When a phone asks for control, the window comes back so you can approve it.
+
 Everything ships inside the app. The Mac app uses the Python 3 built into macOS. If the Command Line Tools aren’t installed, it uses Homebrew’s Python, or asks you to run `xcode-select --install`. The Windows and Linux apps include their own Python.
 
 Connect your computer and phone to the same private Wi-Fi network.
