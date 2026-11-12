@@ -43,15 +43,34 @@ private final class Launcher: ObservableObject {
     private var process: Process?
     private var controls: FileHandle?
 
+    /// The server ships inside the app (Contents/Resources/server). A source
+    /// checkout next to the app is used as a fallback for development.
+    private static func serverDirectory() -> URL? {
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("server", isDirectory: true),
+            Bundle.main.bundleURL.deletingLastPathComponent(),
+        ].compactMap { $0 }
+        return candidates.first {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("server.py").path)
+        }
+    }
+
+    /// The phone files, found by type so certificates from Couch Remote still work.
+    func certificateFile(_ fileExtension: String) -> URL? {
+        guard let certificates else { return nil }
+        let directory = URL(fileURLWithPath: certificates, isDirectory: true)
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.first { $0.pathExtension == fileExtension }
+    }
+
     func start() {
         guard phase == .stopped else { return }
         notice = nil
-        let project = Bundle.main.bundleURL.deletingLastPathComponent()
-        let script = project.appendingPathComponent("server.py")
-        guard FileManager.default.fileExists(atPath: script.path) else {
-            notice = "Keep Lazy Remote.app in the same folder as server.py."
+        guard let project = Self.serverDirectory() else {
+            notice = "This copy of Lazy Remote is incomplete. Download it again."
             return
         }
+        let script = project.appendingPathComponent("server.py")
         let interpreters = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
         guard let python = interpreters.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             notice = "Install Python 3 to start Lazy Remote."
