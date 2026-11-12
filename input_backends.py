@@ -74,6 +74,11 @@ class InputBackend:
             self.button("left", False)
             self.dragging = False
 
+    def unavailable_keys(self):
+        if self.supported_keys is None:
+            return set()
+        return {name for name, (_, key) in KEYMAP.items() if key not in self.supported_keys}
+
     # Shared translation.
     def press(self, modifiers, name):
         if self.supported_keys is not None and name not in self.supported_keys:

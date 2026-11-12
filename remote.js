@@ -122,6 +122,13 @@ function updateGestureSettings(settings) {
     : 'Off. Turn this on if iOS intercepts three-finger swipes.';
 }
 
+function updateAvailableKeys(unavailable) {
+  // Swipe buttons follow the Mac's gesture settings in updateGestureSettings.
+  for (const button of document.querySelectorAll('[data-key]:not([data-swipe])')) {
+    button.hidden = unavailable.includes(button.dataset.key);
+  }
+}
+
 function showToast(message) {
   if (!message) return;
   toast.textContent = message;
@@ -252,9 +259,10 @@ async function checkConnection() {
       manualPairing = false;
       paired = true;
       updateGestureSettings(status.gestures);
+      updateAvailableKeys(status.unavailable || []);
       renderState(status.ready ? 'ready' : 'permission', status.ready
         ? 'Connected securely'
-        : 'Open Accessibility settings from Lazy Remote on the computer.');
+        : 'Allow mouse and keyboard control in Lazy Remote on the computer.');
       if (!busy && !motionInFlight) {
         updateDrag(status.dragging);
         if (releaseDragOnResume && status.ready && status.dragging) {

@@ -86,6 +86,16 @@ class TranslationTests(unittest.TestCase):
         self.assertEqual(error.exception.status, 503)
 
 
+class AvailableKeyTests(unittest.TestCase):
+    def test_windows_reports_brightness_as_unavailable(self):
+        windows = type("FakeWindows", (InputBackend,), {"supported_keys": WindowsInput.supported_keys})()
+        self.assertEqual(windows.unavailable_keys(), {"bright_up", "bright_down"})
+        self.assertEqual(LocalInput(windows).unavailable_keys, ["bright_down", "bright_up"])
+
+    def test_linux_sends_every_key(self):
+        self.assertEqual(Recording().unavailable_keys(), set())
+
+
 class WindowsKeyTests(unittest.TestCase):
     def test_virtual_keys_cover_the_keymap(self):
         names = {name for modifiers, key in KEYMAP.values() for name in (*modifiers, key)}

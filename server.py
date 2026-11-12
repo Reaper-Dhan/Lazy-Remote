@@ -352,7 +352,10 @@ class Remote:
                 }
             ready = self.bridge.send({"action": "check_perm"})
             gestures = {**self.gestures, "swipes": list(self.gestures["swipes"])}
-            return 200, {"ready": ready, "dragging": bool(self.drag_until), "gestures": gestures}
+            return 200, {
+                "ready": ready, "dragging": bool(self.drag_until), "gestures": gestures,
+                "unavailable": list(getattr(self.bridge, "unavailable_keys", ())),
+            }
 
     def input_permission(self, request=False):
         with self.lock:
@@ -652,6 +655,8 @@ class LocalInput:
 
     def __init__(self, backend):
         self.backend = backend
+        # Remote keys this computer cannot send, so the phone can hide their buttons.
+        self.unavailable_keys = sorted(backend.unavailable_keys())
 
     def send(self, command):
         try:

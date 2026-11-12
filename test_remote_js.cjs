@@ -20,8 +20,12 @@ function element() {
   };
 }
 
-async function remote() {
+async function remote({ unavailable = [] } = {}) {
   const elements = new Map();
+  const bright = element();
+  const space = element();
+  bright.dataset = { key: 'bright_up' };
+  space.dataset = { key: 'space' };
   const left = element();
   const right = element();
   left.dataset = { click: 'left', count: '1' };
@@ -34,7 +38,8 @@ async function remote() {
       return elements.get(id);
     },
     querySelector: () => element(),
-    querySelectorAll: selector => selector === '[data-click]' ? [left, right] : [],
+    querySelectorAll: selector => selector === '[data-click]' ? [left, right]
+      : selector === '[data-key]:not([data-swipe])' ? [bright, space] : [],
   };
   const get = document.getElementById;
   get('speedSlider').value = '2';
@@ -53,7 +58,7 @@ async function remote() {
     async fetch(path, options) {
       if (path === '/api/status') {
         return { status: 200, json: async () => ({
-          ready: true, dragging,
+          ready: true, dragging, unavailable,
           gestures: { tap: false, secondary_tap: false, pinch_zoom: true, swipes: ['swipe_up', 'swipe_left'] },
         }) };
       }
@@ -67,7 +72,7 @@ async function remote() {
   await settle();
   const pad = get('trackpad');
   return {
-    commands, get, left, right,
+    commands, get, left, right, bright, space,
     step: async () => { frame(timestamp); await settle(); },
     advance: milliseconds => { timestamp += milliseconds; },
     point: (identifier, clientX, clientY, target = pad) => ({ identifier, clientX, clientY, target }),
@@ -179,4 +184,10 @@ test('minor mouse movement while pressing the pad still clicks', async () => {
   pad.pointer('pointerup', 102, 101);
   await settle();
   assert.deepEqual(pad.commands, [click('left')]);
+});
+
+test('buttons for keys the computer cannot send are hidden', async () => {
+  const pad = await remote({ unavailable: ['bright_up'] });
+  assert.equal(pad.bright.hidden, true);
+  assert.equal(pad.space.hidden, false);
 });
