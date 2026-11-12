@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 
-# Third-party actions are pinned to full commit hashes, so a moved tag cannot
+# Third-party actions and images are pinned to full hashes, so a moved tag cannot
 # change what runs here. The comment names the release each hash belongs to.
 jobs:
   test:
@@ -48,8 +48,6 @@ jobs:
         include:
           - os: windows-latest
             artifact: Lazy-Remote-Windows
-          - os: ubuntu-22.04  # older glibc, so the binary runs on more distributions
-            artifact: Lazy-Remote-Linux
           - os: macos-latest
             artifact: Lazy-Remote-macOS
     runs-on: ${{ matrix.os }}
@@ -57,28 +55,75 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - if: runner.os != 'macOS'
+      - if: runner.os == 'Windows'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - if: runner.os != 'macOS'
+      - if: runner.os == 'Windows'
         run: |
           python -m pip install -r packaging/requirements.txt
           python packaging/build_desktop.py
+      - name: Start the packed Windows app once
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir smoke && cd smoke && unzip -q ../dist/Lazy-Remote-Windows.zip
+          "./Lazy Remote/Lazy Remote.exe" --server --help | tee help.txt
+          grep -q "keep-running" help.txt
       - if: runner.os == 'macOS'
         run: ./"Build Launcher.command"
+      - name: Start the packed Mac server once
+        if: runner.os == 'macOS'
+        run: |
+          mkdir smoke && ditto -x -k dist/Lazy-Remote-macOS.zip smoke
+          server="smoke/Lazy Remote.app/Contents/Resources"
+          "$server/python/bin/python3" -B "$server/server/server.py" --help | tee help.txt
+          grep -q "keep-running" help.txt
+          codesign --verify --deep --strict "smoke/Lazy Remote.app"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
           if-no-files-found: error
 
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    # AlmaLinux 9 (glibc 2.34, supported to 2032): the app then runs on RHEL 9+,
+    # Ubuntu 22.04+ and Debian 12+. Newer build hosts would raise that floor.
+    container: almalinux:9@sha256:245f8aab832fe800aa42bdab5fad75ebbd8e0b4c9f24820a83c638b177857ae2
+    steps:
+      - name: Install Python 3.12 with Tk
+        run: dnf install -y --setopt=install_weak_deps=False python3.12 python3.12-pip python3.12-tkinter binutils tar gzip
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: |
+          python3.12 -c "import tkinter; print('Tk', tkinter.TkVersion)"
+          ldd --version | head -1
+      - run: |
+          python3.12 -m venv /opt/build
+          /opt/build/bin/python -m pip install -r packaging/requirements.txt
+          /opt/build/bin/python packaging/build_desktop.py
+      - name: Start the packed Linux app once
+        run: |
+          mkdir smoke && tar -xzf dist/Lazy-Remote-Linux-*.tar.gz -C smoke
+          smoke/lazy-remote/lazy-remote --server --help | tee help.txt
+          grep -q "keep-running" help.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Lazy-Remote-Linux
+          path: dist/*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write      # signs the build attestation with this workflow's identity
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -92,6 +137,11 @@ jobs:
       - name: Write checksums
         working-directory: dist
         run: sha256sum Lazy-Remote-* > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # Proves each file was built by this workflow from this commit. Anyone can check
+      # with: gh attestation verify <file> --repo Reaper-Dhan/Lazy-Remote
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: dist/Lazy-Remote-*
       - name: Publish the release with the three apps attached
         env:
           GH_TOKEN: ${{ github.token }}

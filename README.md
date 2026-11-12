@@ -17,10 +17,10 @@ You only need the app. No repo, no Terminal. Get it from the [Releases page](htt
 | Computer | Download | First open |
 | --- | --- | --- |
 | Mac | `Lazy-Remote-macOS.zip` | Unzip and drag **Lazy Remote** into **Applications**. Control-click it, choose **Open**, then **Open** again. On newer macOS, use **System Settings → Privacy & Security → Open Anyway**. |
-| Windows | `Lazy-Remote-Windows.zip` | Unzip and run **Lazy Remote.exe**. If SmartScreen appears, click **More info → Run anyway**. When the firewall asks, allow **Private networks** only. |
-| Linux | `Lazy-Remote-Linux-x86_64.tar.gz` | Extract and run `./lazy-remote`. The setup guide gives a one-time command that lets it use `/dev/uinput`. |
+| Windows | `Lazy-Remote-Windows.zip` | Unzip, open the **Lazy Remote** folder and run **Lazy Remote.exe**. If SmartScreen appears, click **More info → Run anyway**. When the firewall asks, allow **Private networks** only. |
+| Linux (Ubuntu 22.04+, Debian 12+, RHEL 9+) | `Lazy-Remote-Linux-x86_64.tar.gz` | Extract and run `lazy-remote/lazy-remote`. The setup guide gives a one-time command that lets it use `/dev/uinput`. |
 
-The apps aren’t signed by Apple or Microsoft, so the system warns once. Each release includes `SHA256SUMS.txt`; check your download against it before you open the app (`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`, or `Get-FileHash` in PowerShell). Ignore the **Source code** files that GitHub adds to every release.
+The apps aren’t signed by Apple or Microsoft, so the system warns once. Each release includes `SHA256SUMS.txt`; check your download against it before you open the app (`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`, or `Get-FileHash` in PowerShell). Ignore the **Source code** files that GitHub adds to every release. To prove a file was built by this project’s workflow, run `gh attestation verify <file> --repo Reaper-Dhan/Lazy-Remote`.
 
 Click **Start server**. The **Setup guide** opens on first launch and walks you through the rest: input access, trusting this computer on your phone, and pairing.
 
