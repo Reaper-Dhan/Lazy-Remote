@@ -31,8 +31,26 @@ def server_command(keep_running=False):
     return [sys.executable, "-B", "-u", str(Path(__file__).resolve().with_name("server.py")), "--launcher", *extra]
 
 
+def enable_sharp_scaling():
+    """Tell Windows this window draws at the screen's real resolution.
+
+    Without it, Windows stretches the Tk window on scaled displays (125%, 150%)
+    and the text looks blurry. Must run before the first window is created.
+    """
+    import ctypes
+    try:
+        ctypes.WinDLL("shcore").SetProcessDpiAwareness(2)  # per-monitor aware
+    except (OSError, AttributeError):
+        try:
+            ctypes.WinDLL("user32").SetProcessDPIAware()  # Windows 7 and 8
+        except (OSError, AttributeError):
+            pass
+
+
 class App:
     def __init__(self):
+        if IS_WINDOWS:
+            enable_sharp_scaling()
         import tkinter as tk
         from tkinter import ttk
 
