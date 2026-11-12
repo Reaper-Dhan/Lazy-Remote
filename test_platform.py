@@ -124,7 +124,9 @@ class FakeUinput:
 class LinuxTests(unittest.TestCase):
     def setUp(self):
         self.device = FakeUinput()
-        self.backend = LinuxInput(opener=lambda: self.device.write_fd, ioctl=self.device.ioctl)
+        self.locked = False
+        self.backend = LinuxInput(opener=lambda: self.device.write_fd, ioctl=self.device.ioctl,
+                                  locked=lambda: self.locked)
         self.backend.ready()
 
     def events(self):
@@ -138,10 +140,17 @@ class LinuxTests(unittest.TestCase):
         self.assertEqual(len(setup), 92)  # sizeof(struct uinput_setup)
         self.assertTrue(setup[8:].startswith(b"Lazy Remote\0"))
 
+    def test_no_input_while_the_session_is_locked(self):
+        self.locked = True
+        self.assertFalse(self.backend.send({"action": "key", "name": "space"}))
+        self.locked = False
+        self.assertTrue(self.backend.send({"action": "key", "name": "space"}))
+        self.assertEqual(len(self.events()), 2)  # only the unlocked press: down and up
+
     def test_missing_device_means_no_permission(self):
         def refuse():
             raise PermissionError("denied")
-        backend = LinuxInput(opener=refuse, ioctl=self.device.ioctl)
+        backend = LinuxInput(opener=refuse, ioctl=self.device.ioctl, locked=lambda: False)
         self.assertFalse(backend.send({"action": "check_perm"}))
 
     def test_typing_uses_shift_and_skips_unknown_characters(self):

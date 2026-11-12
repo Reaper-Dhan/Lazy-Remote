@@ -29,7 +29,8 @@ BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 if IS_MAC:
     PERMISSION_MESSAGE = "Allow Accessibility access on the Mac to use the controls."
 elif IS_LINUX:
-    PERMISSION_MESSAGE = "Allow access to /dev/uinput on the PC. The Lazy Remote setup guide shows how."
+    PERMISSION_MESSAGE = ("Unlock the PC. If it is unlocked, allow access to /dev/uinput: "
+                          "the Lazy Remote setup guide shows how.")
 else:
     PERMISSION_MESSAGE = "The PC refused the input. Try again."
 HELPER_BIN = BASE_DIR / "input_helper"

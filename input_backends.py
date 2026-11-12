@@ -7,6 +7,7 @@ the operating system has not granted input access yet.
 import json
 import os
 import struct
+import subprocess
 import sys
 import time
 
@@ -282,17 +283,21 @@ class LinuxInput(InputBackend):
     UI_DEV_SETUP, UI_DEV_CREATE, UI_DEV_DESTROY = 0x405C5503, 0x5501, 0x5502
     DEVICE = "/dev/uinput"
 
-    def __init__(self, opener=None, ioctl=None):
+    def __init__(self, opener=None, ioctl=None, locked=None):
         super().__init__()
         self.opener = opener or (lambda: os.open(self.DEVICE, os.O_WRONLY | os.O_NONBLOCK))
         if ioctl is None:
             import fcntl
             ioctl = fcntl.ioctl
         self.ioctl = ioctl
+        self.locked = locked or session_locked
         self.fd = None
         self.wheel_rest = [0, 0]  # Hi-res units not yet sent as whole notches.
 
     def ready(self):
+        # uinput reaches the lock screen too, so refuse input while the session is locked.
+        if self.locked():
+            return False
         if self.fd is not None:
             return True
         try:
@@ -377,6 +382,31 @@ class LinuxInput(InputBackend):
             pass
         os.close(self.fd)
         self.fd = None
+
+
+class _LockCheck:
+    """Asks systemd-logind whether this desktop session is locked, at most every 2 seconds."""
+
+    def __init__(self):
+        self.checked = 0.0
+        self.value = False
+
+    def __call__(self):
+        now = time.monotonic()
+        if now - self.checked < 2:
+            return self.value
+        self.checked = now
+        session = os.environ.get("XDG_SESSION_ID")
+        command = ["loginctl", "show-session", session or "auto", "-p", "LockedHint", "--value"]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=1)
+            self.value = result.stdout.strip() == "yes"
+        except (OSError, subprocess.SubprocessError):  # No logind: nothing to check.
+            self.value = False
+        return self.value
+
+
+session_locked = _LockCheck()
 
 
 LINUX_SETUP = (
