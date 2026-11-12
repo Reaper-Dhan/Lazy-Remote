@@ -796,9 +796,10 @@ trackpad.addEventListener('pointermove', event => {
   }
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
+  if (dx === 0 && dy === 0) return;
+  if (pointer.button === 0 && !pointer.moved && Math.hypot(dx, dy) < 4) return;
   pointer.x = event.clientX;
   pointer.y = event.clientY;
-  if (dx === 0 && dy === 0) return;
   if (pointer.button === 0) {
     pointer.moved = true;
     startGestureDrag();
