@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Couch Remote</title>
+  <link rel="stylesheet" href="/remote.css" />
+  <script src="/remote.js" defer></script>
+</head>
+<body>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <span>Mac Couch Remote</span>
+    </div>
+    <div class="sensitivity-wrap" id="controlSettings" hidden>
+      <label for="speedSlider">Speed</label>
+      <input type="range" id="speedSlider" min="0.8" max="4.0" step="0.2" value="2.0" />
+      <output id="speedValue" for="speedSlider">2.0×</output>
+      <button class="btn compact-btn" data-drawer="open" aria-controls="drawerBackdrop" aria-expanded="false">More</button>
+    </div>
+  </div>
+
+  <div class="connection-bar">
+    <div class="connection-status" role="status">
+      <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+      <span id="connectionStatus">Checking connection…</span>
+    </div>
+    <button class="btn compact-btn" id="disconnectBtn" type="button" hidden>Lock remote</button>
+  </div>
+
+  <main class="pair-panel" id="pairPanel" hidden>
+    <form id="pairForm" method="post" action="/api/pair">
+      <h1 id="pairTitle">Pair this browser</h1>
+      <p id="pairHelp">Scan the QR code on your computer or enter the pairing code.</p>
+      <div id="pairCodeFields">
+        <label for="pairCode">Pairing code</label>
+        <input id="pairCode" type="text" placeholder="XXXX-XXXX-XXXX"
+          maxlength="24" autocomplete="one-time-code" autocapitalize="characters"
+          spellcheck="false" required aria-describedby="pairError" />
+      </div>
+      <label class="remember-browser" id="rememberFields">
+        <input type="checkbox" id="rememberBrowser" />
+        <span>Remember this browser for 30 days to skip the QR scan. New sessions still need approval on your computer.</span>
+      </label>
+      <p id="pairError" class="pair-error" role="alert"></p>
+      <button id="pairSubmit" class="btn btn-accent" type="submit" disabled>Request access</button>
+      <button id="enterCodeInstead" class="btn manual-pair" type="button" hidden>Enter a code instead</button>
+    </form>
+    <section id="pendingPanel" hidden>
+      <h1>Approve on your computer</h1>
+      <p>Check that this number matches the request in Couch Remote, then approve it there.</p>
+      <p class="match-number" id="matchNumber"></p>
+    </section>
+  </main>
+
+  <main id="remoteControls" class="remote-controls" aria-label="Mac controls" inert hidden>
+    <!-- Primary Anime / Movie Couch Actions -->
+    <div class="top-actions">
+      <button class="btn btn-danger" data-key="close_tab" data-message="Closed Ad Tab (⌘W)">
+        ✖ Close Ad Tab
+      </button>
+      <button class="btn" data-key="prev_tab" data-message="Switched Tab ◀">
+        ◀ Prev Tab
+      </button>
+      <button class="btn btn-accent" data-key="next_video" data-message="Next Episode (Shift+N)">
+        ⏭ Next Video
+      </button>
+    </div>
+
+    <!-- Media & Playback Strip -->
+    <div class="media-grid">
+      <button class="btn media-btn" data-key="left">
+        <span class="icon">⏪</span>
+        <span class="lbl">-5s / ◀</span>
+      </button>
+      <button class="btn media-btn" data-key="space">
+        <span class="icon">⏯️</span>
+        <span class="lbl">Play/Pause</span>
+      </button>
+      <button class="btn media-btn" data-key="right">
+        <span class="icon">⏩</span>
+        <span class="lbl">+5s / ▶</span>
+      </button>
+      <button class="btn media-btn" data-key="f">
+        <span class="icon">⛶</span>
+        <span class="lbl">Fullscreen</span>
+      </button>
+      <button class="btn media-btn" data-key="escape">
+        <span class="icon">⎋</span>
+        <span class="lbl">Esc</span>
+      </button>
+    </div>
+
+    <div class="media-grid">
+      <button class="btn media-btn" data-key="vol_down">
+        <span class="icon">🔉</span>
+        <span class="lbl">Vol -</span>
+      </button>
+      <button class="btn media-btn" data-key="vol_up">
+        <span class="icon">🔊</span>
+        <span class="lbl">Vol +</span>
+      </button>
+      <button class="btn media-btn" data-key="vol_mute">
+        <span class="icon">🔇</span>
+        <span class="lbl">Mute</span>
+      </button>
+      <button class="btn media-btn" data-key="up">
+        <span class="icon">🔼</span>
+        <span class="lbl">Player Vol+</span>
+      </button>
+      <button class="btn media-btn" data-key="down">
+        <span class="icon">🔽</span>
+        <span class="lbl">Player Vol-</span>
+      </button>
+    </div>
+
+    <!-- Live Keyboard / Search Bar -->
+    <div class="keyboard-bar">
+      <input
+        type="text"
+        id="kbInput"
+        aria-label="Type on Mac"
+        spellcheck="false"
+        class="keyboard-input"
+        placeholder="Tap to type on Mac (Enter = Search)..."
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+      />
+      <button class="btn kb-btn" aria-label="Backspace" data-key="backspace">⌫</button>
+      <button class="btn kb-btn btn-accent" id="enterBtn" aria-label="Enter">↵</button>
+    </div>
+
+    <!-- Multi-Touch Trackpad -->
+    <div class="trackpad-container" id="trackpad">
+      <div class="trackpad-hint">
+        <div class="title">Trackpad</div>
+        <div class="sub" id="gestureHint">One finger moves the pointer.</div>
+      </div>
+      <div class="scroll-strip" id="scrollStrip">SCROLL</div>
+    </div>
+
+    <!-- Bottom Mouse Buttons -->
+    <div class="mouse-buttons">
+      <button class="btn mouse-btn" data-click="left" data-count="1">Left Click</button>
+      <button class="btn mouse-btn" id="dragBtn" aria-pressed="false">Hold</button>
+      <button class="btn mouse-btn" data-click="right" data-count="1">Right Click</button>
+    </div>
+
+    <!-- Extra Shortcuts Drawer -->
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden>
+      <div class="drawer">
+        <div class="drawer-header">
+          <span>Extra Browser &amp; Mac Shortcuts</span>
+          <button class="btn compact-btn" data-drawer="close">Done</button>
+        </div>
+        <div class="drawer-grid">
+          <button class="btn media-btn" data-key="reopen_tab" data-message="Reopened Tab (⌘⇧T)">
+            <span class="icon">↩️</span>
+            <span class="lbl">Undo Close Tab</span>
+          </button>
+          <button class="btn media-btn" data-key="next_tab" data-message="Next Tab">
+            <span class="icon">⇥</span>
+            <span class="lbl">Next Tab</span>
+          </button>
+          <button class="btn media-btn" data-key="refresh" data-message="Refreshed Page">
+            <span class="icon">🔄</span>
+            <span class="lbl">Refresh (⌘R)</span>
+          </button>
+          <button class="btn media-btn" data-key="cmd_left" data-message="Browser Back">
+            <span class="icon">⬅️</span>
+            <span class="lbl">Page Back</span>
+          </button>
+          <button class="btn media-btn" data-key="cmd_right" data-message="Browser Forward">
+            <span class="icon">➡️</span>
+            <span class="lbl">Page Fwd</span>
+          </button>
+          <button class="btn media-btn" data-key="c" data-message="Toggled Subtitles (C)">
+            <span class="icon">💬</span>
+            <span class="lbl">Captions (C)</span>
+          </button>
+          <button class="btn media-btn" data-key="j" data-message="Rewind 10s (J)">
+            <span class="icon">⏪</span>
+            <span class="lbl">-10s (J)</span>
+          </button>
+          <button class="btn media-btn" data-key="l" data-message="Fast Forward 10s (L)">
+            <span class="icon">⏩</span>
+            <span class="lbl">+10s (L)</span>
+          </button>
+          <button class="btn media-btn" data-key="fullscreen_mac" data-message="Mac App Fullscreen">
+            <span class="icon">🖥️</span>
+            <span class="lbl">Mac Fullscreen</span>
+          </button>
+          <button class="btn media-btn" data-key="bright_down">
+            <span class="icon">🔅</span>
+            <span class="lbl">Screen Dim</span>
+          </button>
+          <button class="btn media-btn" data-key="bright_up">
+            <span class="icon">🔆</span>
+            <span class="lbl">Screen Bright</span>
+          </button>
+          <button class="btn media-btn" data-click="left" data-count="2" data-message="Double Clicked">
+            <span class="icon">🖱️</span>
+            <span class="lbl">Double Click</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
