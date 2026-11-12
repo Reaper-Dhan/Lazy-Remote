@@ -1,6 +1,8 @@
 # macOS and generated application builds
 .DS_Store
 /*.app/
+/dist/
+/build/
 /input_helper
 /.launcher-build.*/
 /.helper-build-*/

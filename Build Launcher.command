@@ -66,3 +66,9 @@ if ! mv "$app" 'Lazy Remote.app'; then
     exit 1
 fi
 printf 'Built %s/Lazy Remote.app\n' "$project"
+
+mkdir -p dist
+zip="dist/Lazy-Remote-macOS.zip"
+rm -f "$zip"
+/usr/bin/ditto -c -k --keepParent 'Lazy Remote.app' "$zip"
+printf 'Packed %s/%s to share or attach to a GitHub release\n' "$project" "$zip"
