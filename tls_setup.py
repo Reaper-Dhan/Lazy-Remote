@@ -7,6 +7,7 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import time
 import uuid
 
 from platform_support import IS_WINDOWS, default_state_dir, lock_file
@@ -196,6 +197,15 @@ def _identity_version(directory):
         return 1
 
 
+def _remove_tree(path):
+    """Delete an old certificate folder. Windows antivirus can hold new files open briefly."""
+    for attempt in range(10):
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            return
+        time.sleep(0.1 * (attempt + 1))
+
+
 def private_state_dir(state_dir):
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
     if state_dir.is_symlink():
@@ -259,7 +269,7 @@ def tls_identity(address, hostname, renew, state_dir=STATE_DIR):
                 shutil.rmtree(directory)
                 raise
             if previous and previous.parent == state_dir and previous.name.startswith("tls-"):
-                shutil.rmtree(previous, ignore_errors=True)
+                _remove_tree(previous)
             current = _current_dir(state_dir)
             existing_names = names
 
