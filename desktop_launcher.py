@@ -143,6 +143,19 @@ class App:
         self.render()
 
     def quit(self):
+        if self.process and self.process.poll() is None and self.phase == "running":
+            from tkinter import messagebox
+            keep = messagebox.askyesnocancel(
+                "Lazy Remote is running",
+                "Keep the remote running in the background?\n\n"
+                "Yes minimizes this window. No stops the server and quits.",
+                parent=self.root,
+            )
+            if keep is None:
+                return
+            if keep:
+                self.root.iconify()
+                return
         if self.process and self.process.poll() is None:
             try:
                 self.process.stdin.close()
@@ -189,6 +202,11 @@ class App:
             self.loopback = bool(event.get("loopback"))
             self.input_ready = event.get("input_ready")
             self.phase = "running"
+        if kind == "pairing" and event.get("match") and not self.match:
+            # A phone asks for control while the window may be minimized: bring it back.
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
         self.code, self.qr, self.match = event.get("code"), event.get("qr"), event.get("match")
         self.paired, self.remembered = bool(event.get("paired")), bool(event.get("remembered"))
         self.approved = bool(event.get("approved"))

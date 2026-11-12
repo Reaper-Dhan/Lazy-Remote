@@ -27,6 +27,15 @@ private struct ServerEvent: Decodable {
 private final class Launcher: ObservableObject {
     enum Phase { case stopped, starting, running, stopping }
 
+    /// The app delegate reads this to keep the app alive while the server runs.
+    static weak var current: Launcher?
+    /// Opens the main window again; set by the window itself when it first appears.
+    var showWindow: (() -> Void)?
+
+    init() { Launcher.current = self }
+
+    var isActive: Bool { phase == .starting || phase == .running }
+
     @Published private(set) var phase = Phase.stopped
     @Published private(set) var urls: [String] = []
     @Published var address = ""
@@ -198,6 +207,11 @@ private final class Launcher: ObservableObject {
         }
         code = event.code
         qr = event.qr
+        if event.match != nil && match == nil {
+            // A phone asks for control while the window may be closed: bring it back.
+            showWindow?()
+            NSApp.activate(ignoringOtherApps: true)
+        }
         match = event.match
         paired = event.paired == true
         remembered = event.remembered == true
@@ -367,6 +381,7 @@ private struct LauncherView: View {
     @State private var copiedAddress: String?
     @State private var showGuide = false
     @AppStorage("setupGuideSeen") private var setupGuideSeen = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -435,6 +450,7 @@ private struct LauncherView: View {
         .frame(width: 540, alignment: .leading)
         .sheet(isPresented: $showGuide) { SetupGuide(launcher: launcher) }
         .onAppear {
+            launcher.showWindow = { openWindow(id: "launcher") }
             if !setupGuideSeen {
                 setupGuideSeen = true
                 showGuide = true
@@ -538,7 +554,33 @@ private struct LauncherView: View {
 }
 
 private final class LauncherDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the window quits only when the server is stopped. While it runs,
+    /// Lazy Remote stays in the menu bar.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !(Launcher.current?.isActive ?? false)
+    }
+}
+
+private struct MenuBarMenu: View {
+    @ObservedObject var launcher: Launcher
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Text(launcher.isActive ? (launcher.paired ? "Phone connected" : "Server running") : "Server stopped")
+        Button("Open Lazy Remote") {
+            openWindow(id: "launcher")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if launcher.isActive {
+            Button("Stop server", action: launcher.stop)
+        }
+        Divider()
+        Button("Quit Lazy Remote") {
+            launcher.stop()
+            NSApp.terminate(nil)
+        }
+        .keyboardShortcut("q")
+    }
 }
 
 @main
@@ -551,5 +593,12 @@ struct LazyRemoteApp: App {
             LauncherView(launcher: launcher)
         }
         .windowResizability(.contentSize)
+
+        MenuBarExtra(isInserted: .constant(true)) {
+            MenuBarMenu(launcher: launcher)
+        } label: {
+            Image(systemName: launcher.isActive ? "iphone.radiowaves.left.and.right" : "iphone")
+                .accessibilityLabel("Lazy Remote")
+        }
     }
 }
