@@ -1,65 +1,28 @@
-import fcntl
-import ipaddress
+import datetime
+import hashlib
 import os
 from pathlib import Path
 import plistlib
-import re
 import shutil
 import ssl
 import subprocess
 import tempfile
 import uuid
 
+from platform_support import IS_WINDOWS, default_state_dir, lock_file
 
-APP_SUPPORT = Path.home() / "Library" / "Application Support"
-STATE_DIR = APP_SUPPORT / "Lazy Remote"
-LEGACY_STATE_DIR = APP_SUPPORT / "Couch Remote"
-# Preserve the existing HTTPS identity and browser trust when upgrading.
-if not STATE_DIR.exists() and LEGACY_STATE_DIR.exists():
-    STATE_DIR = LEGACY_STATE_DIR
-OPENSSL = "/usr/bin/openssl"
-LAN_NETWORKS = tuple(
-    ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
-)
+try:  # Bundled with the Windows and Linux apps; the Mac uses its built-in OpenSSL instead.
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+except ImportError:
+    x509 = None
 
 
-def private_ipv4(value):
-    address = ipaddress.IPv4Address(value)
-    if address == ipaddress.IPv4Address("127.0.0.1") or any(address in network for network in LAN_NETWORKS):
-        return str(address)
-    raise ValueError("REMOTE_BIND must be a private IPv4 address or 127.0.0.1.")
-
-
-def local_endpoints():
-    bind = os.environ.get("REMOTE_BIND")
-    if bind:
-        address = private_ipv4(bind)
-    else:
-        interfaces = subprocess.check_output(["/sbin/ifconfig", "-l"], text=True).split()
-        route = subprocess.run(
-            ["/sbin/route", "-n", "get", "default"], capture_output=True, text=True
-        )
-        default = re.search(r"interface:\s*(en\d+)\b", route.stdout)
-        preferred = [default[1]] if default else []
-        address = "127.0.0.1"
-        for interface in dict.fromkeys(preferred + ["en0"] + interfaces):
-            if not re.fullmatch(r"en\d+", interface):
-                continue
-            result = subprocess.run(
-                ["/usr/sbin/ipconfig", "getifaddr", interface], capture_output=True, text=True
-            )
-            try:
-                address = private_ipv4(result.stdout.strip())
-            except ValueError:
-                continue
-            break
-
-    result = subprocess.run(
-        ["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True
-    )
-    name = result.stdout.strip().lower()
-    hostname = f"{name}.local" if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name) else None
-    return address, hostname
+STATE_DIR = default_state_dir()
+OPENSSL = shutil.which("openssl") or "/usr/bin/openssl"
+LIFETIME_DAYS = 365
 
 
 def openssl(*args, cwd, data=None):
@@ -71,10 +34,10 @@ def openssl(*args, cwd, data=None):
     return result.stdout
 
 
-def make_identity(directory, names):
+def _openssl_identity(directory, names):
     root_key = openssl("genrsa", "2048", cwd=directory)
     openssl(
-        "req", "-new", "-x509", "-sha256", "-days", "365", "-key", "/dev/stdin",
+        "req", "-new", "-x509", "-sha256", "-days", str(LIFETIME_DAYS), "-key", "/dev/stdin",
         "-subj", "/CN=Lazy Remote Local Root", "-out", "root.pem",
         "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
@@ -98,13 +61,78 @@ def make_identity(directory, names):
         encoding="ascii",
     )
     openssl(
-        "x509", "-req", "-sha256", "-days", "365", "-in", "server.csr",
+        "x509", "-req", "-sha256", "-days", str(LIFETIME_DAYS), "-in", "server.csr",
         "-CA", "root.pem", "-CAkey", "/dev/stdin", "-CAcreateserial",
         "-extfile", "server.ext", "-out", "server.pem", cwd=directory, data=root_key,
     )
     del root_key
     for name in ("server.csr", "server.ext", "root.srl"):
         (directory / name).unlink(missing_ok=True)
+
+
+def _cryptography_identity(directory, names):
+    import ipaddress
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    until = now + datetime.timedelta(days=LIFETIME_DAYS)
+    root_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Lazy Remote Local Root")])
+    root_ski = x509.SubjectKeyIdentifier.from_public_key(root_key.public_key())
+    root = (
+        x509.CertificateBuilder()
+        .subject_name(root_name).issuer_name(root_name)
+        .public_key(root_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now).not_valid_after(until)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.KeyUsage(
+            digital_signature=False, content_commitment=False, key_encipherment=False,
+            data_encipherment=False, key_agreement=False, key_cert_sign=True, crl_sign=True,
+            encipher_only=False, decipher_only=False,
+        ), critical=True)
+        .add_extension(root_ski, critical=False)
+        .sign(root_key, hashes.SHA256())
+    )
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    alternatives = [
+        x509.DNSName(name) if name.endswith(".local") else x509.IPAddress(ipaddress.ip_address(name))
+        for name in names
+    ]
+    server = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Lazy Remote")]))
+        .issuer_name(root_name)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now).not_valid_after(until)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.KeyUsage(
+            digital_signature=True, content_commitment=False, key_encipherment=True,
+            data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
+            encipher_only=False, decipher_only=False,
+        ), critical=True)
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(root_ski), critical=False)
+        .add_extension(x509.SubjectAlternativeName(alternatives), critical=False)
+        .sign(root_key, hashes.SHA256())
+    )
+    # Only the root certificate is kept; its signing key is discarded here.
+    del root_key
+    (directory / "root.pem").write_bytes(root.public_bytes(serialization.Encoding.PEM))
+    (directory / "server.pem").write_bytes(server.public_bytes(serialization.Encoding.PEM))
+    key = server_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()
+    )
+    with os.fdopen(os.open(directory / "server.key", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as file:
+        file.write(key)
+
+
+def make_identity(directory, names):
+    if x509 is not None:
+        _cryptography_identity(directory, names)
+    else:
+        _openssl_identity(directory, names)
     (directory / "server.key").chmod(0o600)
     (directory / "names").write_text("\n".join(names), encoding="ascii")
     root_der = ssl.PEM_cert_to_DER_cert((directory / "root.pem").read_text(encoding="ascii"))
@@ -128,50 +156,90 @@ def make_identity(directory, names):
     (directory / "Lazy Remote.mobileconfig").write_bytes(plistlib.dumps(profile))
 
 
+def certificate_expired(path):
+    if x509 is not None:
+        certificate = x509.load_pem_x509_certificate(path.read_bytes())
+        expiry = getattr(certificate, "not_valid_after_utc", None)
+        if expiry is None:  # cryptography before 42
+            expiry = certificate.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+        return expiry <= datetime.datetime.now(datetime.timezone.utc)
+    check = subprocess.run([OPENSSL, "x509", "-checkend", "0", "-noout", "-in", str(path)], capture_output=True)
+    return check.returncode != 0
+
+
+def fingerprint(path):
+    der = ssl.PEM_cert_to_DER_cert(path.read_text(encoding="ascii"))
+    digest = hashlib.sha256(der).hexdigest().upper()
+    return ":".join(digest[index:index + 2] for index in range(0, len(digest), 2))
+
+
 def private_state_dir(state_dir):
     state_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-    info = state_dir.lstat()
-    if state_dir.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if state_dir.is_symlink():
         raise RuntimeError(f"Lazy Remote storage must be a private directory owned by you: {state_dir}")
+    if not IS_WINDOWS:
+        # On Windows the folder inherits the user profile's private ACL instead.
+        info = state_dir.lstat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise RuntimeError(f"Lazy Remote storage must be a private directory owned by you: {state_dir}")
     return state_dir.resolve()
+
+
+def _point_current_at(state_dir, current, directory):
+    """Switch the active certificate folder in one step."""
+    if IS_WINDOWS:
+        # Symbolic links need extra rights on Windows, so a pointer file names the folder.
+        pending = state_dir / ".current.tmp"
+        pending.write_text(directory.name, encoding="ascii")
+        pending.replace(state_dir / "current")
+        return
+    link = state_dir / f".{directory.name}"
+    try:
+        link.symlink_to(directory.name, target_is_directory=True)
+        link.replace(current)
+    except BaseException:
+        link.unlink(missing_ok=True)
+        raise
+
+
+def _current_dir(state_dir):
+    if IS_WINDOWS:
+        try:
+            name = (state_dir / "current").read_text(encoding="ascii").strip()
+        except FileNotFoundError:
+            return state_dir / "certificates"
+        return state_dir / name
+    return state_dir / "certificates"
 
 
 def tls_identity(address, hostname, renew, state_dir=STATE_DIR):
     state_dir = private_state_dir(state_dir)
-    current = state_dir / "certificates"
     with (state_dir / "lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_file(lock)
+        current = _current_dir(state_dir)
         existing_names = (current / "names").read_text(encoding="ascii").splitlines() if current.exists() else []
         names = [address]
         if hostname and address != "127.0.0.1":
             names.append(hostname)
         if not renew and existing_names:
-            check = subprocess.run(
-                [OPENSSL, "x509", "-checkend", "0", "-noout", "-in", str(current / "server.pem")],
-                capture_output=True,
-            )
-            renew = check.returncode != 0 or not set(names).intersection(existing_names)
+            renew = certificate_expired(current / "server.pem") or not set(names).intersection(existing_names)
         if renew or not existing_names:
             directory = Path(tempfile.mkdtemp(prefix="tls-", dir=state_dir))
-            link = state_dir / f".{directory.name}"
             try:
                 cert_names = list(dict.fromkeys(names + ["127.0.0.1"] + ([hostname] if hostname else [])))
                 make_identity(directory, cert_names)
-                previous = current.resolve() if current.is_symlink() else None
-                link.symlink_to(directory.name, target_is_directory=True)
-                link.replace(current)
+                previous = current.resolve() if current.exists() else None
+                _point_current_at(state_dir, state_dir / "certificates", directory)
             except BaseException:
-                link.unlink(missing_ok=True)
                 shutil.rmtree(directory)
                 raise
             if previous and previous.parent == state_dir and previous.name.startswith("tls-"):
                 shutil.rmtree(previous, ignore_errors=True)
+            current = _current_dir(state_dir)
             existing_names = names
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(current / "server.pem", current / "server.key")
-        fingerprint = openssl(
-            "x509", "-noout", "-fingerprint", "-sha256", "-in", "root.pem", cwd=current
-        ).decode().strip().split("=", 1)[1]
-    return context, current, [name for name in names if name in existing_names], fingerprint
+        root_fingerprint = fingerprint(current / "root.pem")
+    return context, current, [name for name in names if name in existing_names], root_fingerprint

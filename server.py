@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import fcntl
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
@@ -21,10 +20,18 @@ import threading
 import time
 
 from auth import APPROVAL_LIFETIME, DEVICE_LIFETIME, Pairing, RequestError
-from tls_setup import STATE_DIR, local_endpoints, private_state_dir, tls_identity
+from platform_support import HOST_NAME, IS_LINUX, IS_MAC, local_endpoints, lock_file
+from tls_setup import STATE_DIR, private_state_dir, tls_identity
 
 
-BASE_DIR = Path(__file__).resolve().parent
+# A packaged app (PyInstaller) unpacks its files into sys._MEIPASS.
+BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+if IS_MAC:
+    PERMISSION_MESSAGE = "Allow Accessibility access on the Mac to use the controls."
+elif IS_LINUX:
+    PERMISSION_MESSAGE = "Allow access to /dev/uinput on the PC. The Lazy Remote setup guide shows how."
+else:
+    PERMISSION_MESSAGE = "The PC refused the input. Try again."
 HELPER_BIN = BASE_DIR / "input_helper"
 COOKIE = "__Host-couch_remote"
 DEVICE_COOKIE = "__Host-couch_device"
@@ -650,7 +657,7 @@ def main():
         state = private_state_dir(STATE_DIR)
         instance = (state / "instance.lock").open("a")
         try:
-            fcntl.flock(instance, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(instance, blocking=False)
         except BlockingIOError:
             raise RuntimeError("Lazy Remote is already running. Stop the other instance first.") from None
         context, directory, names, fingerprint = tls_identity(address, hostname, args.renew_certificate, state)
