@@ -283,7 +283,7 @@ class LinuxInput(InputBackend):
     UI_DEV_SETUP, UI_DEV_CREATE, UI_DEV_DESTROY = 0x405C5503, 0x5501, 0x5502
     DEVICE = "/dev/uinput"
 
-    def __init__(self, opener=None, ioctl=None, locked=None):
+    def __init__(self, opener=None, ioctl=None, locked=None, typer=None):
         super().__init__()
         self.opener = opener or (lambda: os.open(self.DEVICE, os.O_WRONLY | os.O_NONBLOCK))
         if ioctl is None:
@@ -291,8 +291,23 @@ class LinuxInput(InputBackend):
             ioctl = fcntl.ioctl
         self.ioctl = ioctl
         self.locked = locked or session_locked
+        self.typer = typer if typer is not None else text_tool()
         self.fd = None
         self.wheel_rest = [0, 0]  # Hi-res units not yet sent as whole notches.
+
+    def type_with_tool(self, value):
+        """Type through xdotool (X11) or wtype (Wayland), which follow the active
+        keyboard layout and handle any character. Returns False to fall back."""
+        if not self.typer:
+            return False
+        try:
+            result = subprocess.run([*self.typer, "--", value], capture_output=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode != 0:
+            self.typer = None  # e.g. wtype on GNOME, which lacks the protocol; stop trying.
+            return False
+        return True
 
     def ready(self):
         # uinput reaches the lock screen too, so refuse input while the session is locked.
@@ -362,6 +377,8 @@ class LinuxInput(InputBackend):
         self.sync()
 
     def text(self, value):
+        if self.type_with_tool(value):
+            return
         # uinput sends key positions, not characters, so this assumes a US layout.
         # Characters outside it are skipped.
         for char in value:
@@ -382,6 +399,17 @@ class LinuxInput(InputBackend):
             pass
         os.close(self.fd)
         self.fd = None
+
+
+def text_tool():
+    """The command that types text in this desktop session, or None."""
+    import shutil
+    session = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    if session == "wayland" and shutil.which("wtype"):
+        return ["wtype"]
+    if session == "x11" and shutil.which("xdotool"):
+        return ["xdotool", "type", "--clearmodifiers", "--delay", "8"]
+    return None
 
 
 class _LockCheck:

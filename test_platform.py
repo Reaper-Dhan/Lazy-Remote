@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -126,7 +127,7 @@ class LinuxTests(unittest.TestCase):
         self.device = FakeUinput()
         self.locked = False
         self.backend = LinuxInput(opener=lambda: self.device.write_fd, ioctl=self.device.ioctl,
-                                  locked=lambda: self.locked)
+                                  locked=lambda: self.locked, typer=[])
         self.backend.ready()
 
     def events(self):
@@ -150,7 +151,7 @@ class LinuxTests(unittest.TestCase):
     def test_missing_device_means_no_permission(self):
         def refuse():
             raise PermissionError("denied")
-        backend = LinuxInput(opener=refuse, ioctl=self.device.ioctl, locked=lambda: False)
+        backend = LinuxInput(opener=refuse, ioctl=self.device.ioctl, locked=lambda: False, typer=[])
         self.assertFalse(backend.send({"action": "check_perm"}))
 
     def test_typing_uses_shift_and_skips_unknown_characters(self):
@@ -161,6 +162,21 @@ class LinuxTests(unittest.TestCase):
             (key, shift, 1), (key, a, 1), (key, a, 0), (key, shift, 0),
             (key, shift, 1), (key, one, 1), (key, one, 0), (key, shift, 0),
         ])
+
+    def test_typing_tool_handles_any_layout_and_falls_back_when_it_fails(self):
+        script = Path(tempfile.mkdtemp()) / "typer.py"
+        log = script.with_suffix(".log")
+        script.write_text("import sys\nassert sys.argv[3] == '--'\n"
+                          "open(sys.argv[1], 'a', encoding='utf-8').write(sys.argv[4])\n"
+                          "sys.exit(int(sys.argv[2]))\n", encoding="utf-8")
+        self.backend.typer = [sys.executable, str(script), str(log), "0"]
+        self.backend.text("héllo -n")
+        self.assertEqual(log.read_text(encoding="utf-8"), "héllo -n")  # passed after "--", never as an option
+        self.backend.typer = [sys.executable, str(script), str(log), "1"]
+        self.backend.text("a")
+        self.assertIsNone(self.backend.typer)  # a failing tool is not retried
+        key, a = LinuxInput.EV_KEY, LinuxInput.KEY["a"]
+        self.assertEqual(self.events(), [(key, a, 1), (key, a, 0)])  # only the fallback used uinput
 
     def test_wheel_sends_hi_res_and_whole_notches(self):
         self.backend.wheel(90, 0)
