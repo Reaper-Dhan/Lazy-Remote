@@ -171,6 +171,7 @@ class RemoteSecurityTests(unittest.TestCase):
         for body in (
             [],
             {"action": "check_perm"},
+            {"action": "request_perm"},
             {"action": "key", "name": []},
             {"action": "click", "button": "left", "count": 0},
             {"action": "scroll", "dx": 0, "dy": 2147483648},

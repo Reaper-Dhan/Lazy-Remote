@@ -345,10 +345,10 @@ class Remote:
             gestures = {**self.gestures, "swipes": list(self.gestures["swipes"])}
             return 200, {"ready": ready, "dragging": bool(self.drag_until), "gestures": gestures}
 
-    def input_permission(self):
+    def input_permission(self, request=False):
         with self.lock:
             try:
-                return self.bridge.send({"action": "check_perm"})
+                return self.bridge.send({"action": "request_perm" if request else "check_perm"})
             except RequestError:
                 return None
 
@@ -614,8 +614,8 @@ def local_controls(remote, stop, launcher):
             decision = re.fullmatch(r"(approve|deny) ([0-9]{6})", command)
             if decision:
                 remote.decide(decision[2], decision[1] == "approve")
-            elif launcher and command == "check_access":
-                launcher_event("permission", input_ready=remote.input_permission())
+            elif launcher and command in ("check_access", "request_input_access"):
+                launcher_event("permission", input_ready=remote.input_permission(request=command == "request_input_access"))
             elif command in ("new_code", "forget") or (not launcher and not command):
                 code = remote.new_code(forget=command != "new_code")
                 if not launcher:
