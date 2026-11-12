@@ -23,6 +23,17 @@ except ImportError:
 STATE_DIR = default_state_dir()
 OPENSSL = shutil.which("openssl") or "/usr/bin/openssl"
 LIFETIME_DAYS = 365
+# Version 2 added name constraints; older identities are replaced once.
+IDENTITY_VERSION = 2
+# The root may only vouch for ".local" names, so it can never impersonate a real
+# website. IP addresses are left unconstrained: several TLS libraries (LibreSSL
+# among them) reject any certificate whose root limits IP ranges. The rule is
+# non-critical so a phone that does not understand it still connects.
+PERMITTED_DOMAIN = "local"
+
+
+def _openssl_constraints():
+    return f"nameConstraints=permitted;DNS:{PERMITTED_DOMAIN}"
 
 
 def openssl(*args, cwd, data=None):
@@ -42,6 +53,7 @@ def _openssl_identity(directory, names):
         "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
         "-addext", "subjectKeyIdentifier=hash",
+        "-addext", _openssl_constraints(),
         cwd=directory, data=root_key,
     )
     openssl(
@@ -91,8 +103,11 @@ def _cryptography_identity(directory, names):
             encipher_only=False, decipher_only=False,
         ), critical=True)
         .add_extension(root_ski, critical=False)
-        .sign(root_key, hashes.SHA256())
     )
+    root = root.add_extension(x509.NameConstraints(
+        permitted_subtrees=[x509.DNSName(PERMITTED_DOMAIN)], excluded_subtrees=None,
+    ), critical=False)
+    root = root.sign(root_key, hashes.SHA256())
     server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     alternatives = [
         x509.DNSName(name) if name.endswith(".local") else x509.IPAddress(ipaddress.ip_address(name))
@@ -135,6 +150,7 @@ def make_identity(directory, names):
         _openssl_identity(directory, names)
     (directory / "server.key").chmod(0o600)
     (directory / "names").write_text("\n".join(names), encoding="ascii")
+    (directory / "version").write_text(str(IDENTITY_VERSION), encoding="ascii")
     root_der = ssl.PEM_cert_to_DER_cert((directory / "root.pem").read_text(encoding="ascii"))
     (directory / "Lazy Remote Root.cer").write_bytes(root_der)
     profile = {
@@ -171,6 +187,13 @@ def fingerprint(path):
     der = ssl.PEM_cert_to_DER_cert(path.read_text(encoding="ascii"))
     digest = hashlib.sha256(der).hexdigest().upper()
     return ":".join(digest[index:index + 2] for index in range(0, len(digest), 2))
+
+
+def _identity_version(directory):
+    try:
+        return int((directory / "version").read_text(encoding="ascii").strip())
+    except (FileNotFoundError, ValueError):
+        return 1
 
 
 def private_state_dir(state_dir):
@@ -222,7 +245,9 @@ def tls_identity(address, hostname, renew, state_dir=STATE_DIR):
         if hostname and address != "127.0.0.1":
             names.append(hostname)
         if not renew and existing_names:
-            renew = certificate_expired(current / "server.pem") or not set(names).intersection(existing_names)
+            renew = (certificate_expired(current / "server.pem")
+                     or not set(names).intersection(existing_names)
+                     or _identity_version(current) < IDENTITY_VERSION)
         if renew or not existing_names:
             directory = Path(tempfile.mkdtemp(prefix="tls-", dir=state_dir))
             try:

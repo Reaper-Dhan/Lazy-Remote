@@ -155,6 +155,32 @@ class LinuxTests(unittest.TestCase):
 
 
 class CertificateTests(unittest.TestCase):
+    @unittest.skipIf(shutil.which("openssl") is None, "openssl is not installed")
+    def test_root_only_vouches_for_local_names(self):
+        # Covers whichever backend this Python uses (cryptography or the openssl binary).
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            tls_setup.make_identity(directory, ["10.1.2.3", "pc.local", "127.0.0.1"])
+            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "root.pem"],
+                                  cwd=directory, capture_output=True, text=True).stdout
+            self.assertIn("Name Constraints:", root)
+            self.assertIn("DNS:local", root)
+            self.assertNotIn("Name Constraints: critical", root)  # phones that lack support still connect
+            self.assertNotIn("IP:", root.split("Name Constraints:", 1)[1].split("X509v3", 1)[0])
+            verify = subprocess.run(
+                ["openssl", "verify", "-CAfile", "root.pem", "-purpose", "sslserver", "server.pem"],
+                cwd=directory, capture_output=True, text=True,
+            )
+            self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+            self.assertEqual((directory / "version").read_text(), str(tls_setup.IDENTITY_VERSION))
+
+    def test_identities_without_constraints_are_replaced(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "tls"
+            _, path, _, first = tls_setup.tls_identity("127.0.0.1", None, False, state)
+            (path / "version").unlink()  # Looks like an identity made before name constraints.
+            self.assertNotEqual(tls_setup.tls_identity("127.0.0.1", None, False, state)[3], first)
+
     @unittest.skipIf(tls_setup.x509 is None, "cryptography is not installed")
     @unittest.skipIf(shutil.which("openssl") is None, "openssl is not installed")
     def test_cryptography_identity_verifies_with_openssl(self):
@@ -170,6 +196,9 @@ class CertificateTests(unittest.TestCase):
                                   cwd=directory, capture_output=True, text=True).stdout
             self.assertIn("IP Address:192.168.1.2", text)
             self.assertIn("DNS:pc.local", text)
+            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "root.pem"],
+                                  cwd=directory, capture_output=True, text=True).stdout
+            self.assertIn("DNS:local", root)
             expected = subprocess.run(
                 ["openssl", "x509", "-noout", "-fingerprint", "-sha256", "-in", "root.pem"],
                 cwd=directory, capture_output=True, text=True,
