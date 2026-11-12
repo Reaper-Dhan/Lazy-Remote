@@ -11,7 +11,7 @@ import unittest
 
 from server import (
     APPROVAL_COOKIE, COOKIE, DEVICE_COOKIE, IDLE_LIFETIME, SERVER_IDLE_MESSAGE,
-    SERVER_IDLE_TIMEOUT, Remote, RemoteServer,
+    SERVER_IDLE_TIMEOUT, Remote, RemoteServer, three_finger_shortcuts,
 )
 from tls_setup import tls_identity
 
@@ -206,6 +206,33 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/cmd", dict(packet, seq=4, dx=float("inf")), cookie=cookie)[0], 400)
         self.assertEqual(self.request("/api/disconnect", {}, cookie=cookie)[0], 200)
         self.assertFalse(self.remote.motion_streams)
+
+    def test_three_finger_swipes_follow_enabled_mac_shortcuts(self):
+        trackpad = {
+            "TrackpadThreeFingerHorizSwipeGesture": 2,
+            "TrackpadThreeFingerVertSwipeGesture": 2,
+        }
+        hotkeys = {
+            "32": {"enabled": False},
+            "33": {"enabled": True, "value": {"type": "standard", "parameters": [65535, 12, 1 << 20]}},
+        }
+        shortcuts = three_finger_shortcuts(trackpad, hotkeys)
+        self.assertEqual(shortcuts["swipe_left"], {"key_code": 124, "flags": 1 << 18})
+        self.assertEqual(shortcuts["swipe_right"], {"key_code": 123, "flags": 1 << 18})
+        self.assertNotIn("swipe_up", shortcuts)
+        self.assertEqual(shortcuts["swipe_down"], {"key_code": 12, "flags": 1 << 20})
+        self.assertEqual(three_finger_shortcuts(dict(trackpad, TrackpadThreeFingerDrag=1), hotkeys), {})
+        self.remote.gestures = {**self.remote.gestures, "swipes": shortcuts}
+        cookie = self.pair().split(";", 1)[0]
+        _, _, body = self.request("/api/status", cookie=cookie)
+        self.assertEqual(set(json.loads(body)["gestures"]["swipes"]), set(shortcuts))
+        self.bridge.commands.clear()
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "swipe_up"}, cookie=cookie)[0], 400)
+        self.assertEqual(self.request("/api/cmd", {
+            "action": "shortcut", "key_code": 12, "flags": 1 << 20,
+        }, cookie=cookie)[0], 400)
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "swipe_down"}, cookie=cookie)[0], 200)
+        self.assertEqual(self.bridge.commands, [{"action": "shortcut", "key_code": 12, "flags": 1 << 20}])
 
     def test_drag_releases_when_expired_or_revoked(self):
         cookie = self.pair().split(";", 1)[0]
