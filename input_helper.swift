@@ -164,8 +164,7 @@ let keyMap: [String: (CGKeyCode, CGEventFlags)] = [
 ]
 
 if CommandLine.arguments.contains("--request-access") {
-    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-    _ = AXIsProcessTrustedWithOptions(options)
+    _ = CGRequestPostEventAccess()
 }
 
 while let line = readLine() {
@@ -180,11 +179,15 @@ while let line = readLine() {
     }
 
     if action == "check_perm" {
-        print(AXIsProcessTrusted() ? "ok" : "permission")
+        print(CGPreflightPostEventAccess() ? "ok" : "permission")
         continue
     }
-    guard AXIsProcessTrusted() else {
-        isDragging = false
+    if action == "request_perm" {
+        print(CGRequestPostEventAccess() ? "ok" : "permission")
+        continue
+    }
+    guard CGPreflightPostEventAccess() else {
+        dragEventNumber = nil
         print("permission")
         continue
     }
