@@ -49,7 +49,9 @@ For typing, Lazy Remote uses `xdotool` (X11) or `wtype` (Wayland, except GNOME) 
 
 ### Trust this computer on your phone
 
-Open **Set up phone** in Lazy Remote. On a Mac it sends the right file with AirDrop or the share menu. On Windows and Linux it opens the certificate folder. It also shows the steps and the certificate fingerprint.
+Open **Set up phone** in Lazy Remote. On a Mac it sends the right file with AirDrop or the share menu. On every system it can also **send it over Wi-Fi with a QR code**: scan the code with the phone camera and download the file. It also shows the steps and the certificate fingerprint.
+
+The Wi-Fi link is plain HTTP, because the phone can’t use HTTPS before it trusts the computer. Someone else on the same network could swap the file, so compare the fingerprint on the phone with the one in Lazy Remote before you install it. The link uses a random address and stops after 2 minutes or two downloads.
 
 | Phone | File | Where to install it |
 | --- | --- | --- |

@@ -91,6 +91,7 @@ class App:
         self.urls, self.code, self.qr, self.match = [], None, None, None
         self.paired = self.remembered = self.approved = self.loopback = False
         self.input_ready = self.certificates = self.fingerprint = None
+        self.share_url = None
         self.address.set("")
 
     def start(self):
@@ -193,6 +194,12 @@ class App:
             return
         if kind == "permission":
             self.input_ready = event.get("input_ready")
+            return
+        if kind == "certificate_share":
+            self.share_url = event.get("url")
+            return
+        if kind == "certificate_share_ended":
+            self.share_url = None
             return
         if kind == "ready":
             self.urls = event.get("urls") or []
@@ -339,7 +346,7 @@ class App:
         else:
             ttk.Button(frame, text="Show a new pairing QR code", command=lambda: self.send("new_code")).pack(anchor="w")
 
-    def draw_qr(self, parent, payload):
+    def draw_qr(self, parent, payload, size=176):
         try:
             import qrcode
         except ImportError:
@@ -350,7 +357,7 @@ class App:
         code.add_data(payload)
         code.make(fit=True)
         matrix = code.get_matrix()
-        cell = max(2, 176 // len(matrix))
+        cell = max(2, size // len(matrix))
         size = cell * len(matrix)
         canvas = self.tk.Canvas(parent, width=size, height=size, background="white", highlightthickness=0)
         for y, line in enumerate(matrix):
@@ -432,6 +439,21 @@ class App:
                          "Choose Install a certificate → CA certificate, then pick the file."]
             for index, line in enumerate(steps, 1):
                 self.label(frame, f"{index}. {line}", "Muted.TLabel")
+            if self.share_url:
+                share = ttk.Frame(frame)
+                share.pack(anchor="w", pady=6)
+                self.draw_qr(share, self.share_url, size=120)
+                side = ttk.Frame(share)
+                side.pack(side="left", padx=12)
+                ttk.Label(side, text="Scan with the phone camera to download.", wraplength=300).pack(anchor="w")
+                ttk.Label(side, text="Stops after 2 minutes or two downloads. Plain Wi-Fi link: install only "
+                                     "if the fingerprint on the phone matches the one below.",
+                          style="Muted.TLabel", wraplength=300).pack(anchor="w", pady=4)
+                ttk.Button(side, text="Stop sharing",
+                           command=lambda: self.send("stop_certificate_share")).pack(anchor="w")
+            else:
+                ttk.Button(frame, text="Send to the phone over Wi-Fi with a QR code",
+                           command=lambda: self.send("share_certificate")).pack(anchor="w", pady=4)
             if self.fingerprint:
                 fingerprint = ttk.Entry(frame, width=70)
                 fingerprint.insert(0, self.fingerprint)

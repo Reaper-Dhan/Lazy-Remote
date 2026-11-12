@@ -46,6 +46,8 @@ MAX_BODY = 4096
 CONNECTION_TIMEOUT = 5
 MAX_DELTA = 16384
 MOTION_POSITION_LIMIT = 2 ** 32
+SHARE_LIFETIME = 120  # seconds the phone certificate is offered over plain HTTP
+SHARE_DOWNLOADS = 2
 DEFAULT_GESTURES = {
     "tap": True, "secondary_tap": True, "scroll": True, "horizontal_scroll": True,
     "natural_scroll": True, "pinch_zoom": False, "three_finger_drag": False, "swipes": {},
@@ -439,6 +441,135 @@ class Remote:
                 next_gesture_check = time.monotonic() + 10
 
 
+class CertificateShare:
+    """Serves the public phone certificate over plain HTTP for a short time.
+
+    The phone cannot use HTTPS before it trusts this computer, so the files go
+    out unencrypted: someone else on the network could swap them. The page and
+    the launcher both show the root fingerprint so the user can compare them,
+    and the share ends after SHARE_LIFETIME seconds or SHARE_DOWNLOADS files.
+    """
+
+    FILES = {
+        "Lazy-Remote.mobileconfig": ("mobileconfig", "application/x-apple-aspen-config"),
+        "Lazy-Remote-Root.cer": ("cer", "application/x-x509-ca-cert"),
+    }
+
+    def __init__(self, address, directory, fingerprint, on_change=None):
+        self.address, self.directory, self.fingerprint = address, Path(directory), fingerprint
+        self.on_change = on_change
+        self.server = None
+        self.lock = threading.Lock()
+
+    def file(self, extension):
+        return next((path for path in self.directory.iterdir() if path.suffix == "." + extension), None)
+
+    def start(self):
+        with self.lock:
+            self._stop_locked(publish=False)
+            token = secrets.token_urlsafe(16)
+            share = self
+
+            class Handler(BaseHTTPRequestHandler):
+                server_version = "LazyRemote"
+                sys_version = ""
+
+                def log_message(self, *_):
+                    pass
+
+                def do_GET(self):
+                    prefix = f"/{token}/"
+                    if not self.path.startswith(prefix):
+                        self.send_error(404)
+                        return
+                    name = self.path[len(prefix):]
+                    if name == "":
+                        body, kind = share.page(), "text/html; charset=utf-8"
+                    elif name in share.FILES:
+                        extension, kind = share.FILES[name]
+                        path = share.file(extension)
+                        if path is None:
+                            self.send_error(404)
+                            return
+                        body = path.read_bytes()
+                    else:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", kind)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
+                    if name:
+                        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                    self.end_headers()
+                    self.wfile.write(body)
+                    if name:
+                        share.downloaded()
+
+            server = ThreadingHTTPServer((self.address, 0), Handler)
+            server.timeout = 0.5
+            server.until = time.monotonic() + SHARE_LIFETIME
+            server.downloads = 0
+            self.server = server
+            threading.Thread(target=self._serve, args=(server,), daemon=True).start()
+            url = f"http://{self.address}:{server.server_address[1]}/{token}/"
+        self._publish("certificate_share", url=url, seconds=SHARE_LIFETIME, fingerprint=self.fingerprint)
+        return url
+
+    def page(self):
+        return (
+            "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Lazy Remote certificate</title>"
+            "<body style='font:17px -apple-system,system-ui,sans-serif;margin:24px;line-height:1.45'>"
+            "<h1 style='font-size:22px'>Trust this computer</h1>"
+            "<p><a href='Lazy-Remote.mobileconfig'>iPhone or iPad profile</a><br>"
+            "<a href='Lazy-Remote-Root.cer'>Android certificate</a></p>"
+            "<p>Check that this fingerprint matches the one on the computer before you install:</p>"
+            f"<p style='font:13px ui-monospace,monospace;word-break:break-all'>{self.fingerprint}</p>"
+            "<p>iPhone: then open Settings → Profile Downloaded → Install, and turn on "
+            "Lazy Remote Local Root in Settings → General → About → Certificate Trust Settings.</p>"
+            "<p>Android: open Settings, search for “CA certificate”, and install the downloaded file.</p>"
+        ).encode("utf-8")
+
+    def downloaded(self):
+        with self.lock:
+            if self.server is None:
+                return
+            self.server.downloads += 1
+            if self.server.downloads >= SHARE_DOWNLOADS:
+                self.server.until = 0
+
+    def _serve(self, server):
+        while time.monotonic() < server.until and self.server is server:
+            server.handle_request()
+        with self.lock:
+            if self.server is server:
+                self.server = None
+                ended = True
+            else:
+                ended = False
+        server.server_close()
+        if ended:
+            self._publish("certificate_share_ended")
+
+    def stop(self):
+        with self.lock:
+            self._stop_locked(publish=True)
+
+    def _stop_locked(self, publish):
+        if self.server is not None:
+            self.server.until = 0
+            self.server = None
+            if publish:
+                threading.Thread(target=self._publish, args=("certificate_share_ended",), daemon=True).start()
+
+    def _publish(self, event, **data):
+        if self.on_change:
+            self.on_change(event, **data)
+
+
 class RemoteServer(ThreadingHTTPServer):
     def __init__(self, address):
         self.slots = threading.BoundedSemaphore(32)
@@ -616,12 +747,17 @@ def launcher_event(event, **data):
 def terminal_event(event, **data):
     if event == "notice":
         print(data["message"], flush=True)
+    elif event == "certificate_share":
+        print(f"Open {data['url']} on your phone within {data['seconds']} seconds to get the certificate.\n"
+              f"Check that it shows this fingerprint: {data['fingerprint']}", flush=True)
+    elif event == "certificate_share_ended":
+        print("Stopped offering the certificate.", flush=True)
     elif data["match"] and not data["approved"]:
         print(f"Phone requests access. Compare {data['match']} on both screens, "
               f"then type approve {data['match']} or deny {data['match']}.", flush=True)
 
 
-def local_controls(remote, stop, launcher):
+def local_controls(remote, stop, launcher, share=None):
     for line in sys.stdin:
         if stop.is_set():
             return
@@ -632,6 +768,10 @@ def local_controls(remote, stop, launcher):
                 remote.decide(decision[2], decision[1] == "approve")
             elif launcher and command in ("check_access", "request_input_access"):
                 launcher_event("permission", input_ready=remote.input_permission(request=command == "request_input_access"))
+            elif share is not None and command == "share_certificate":
+                share.start()
+            elif share is not None and command == "stop_certificate_share":
+                share.stop()
             elif command in ("new_code", "forget") or (not launcher and not command):
                 code = remote.new_code(forget=command != "new_code")
                 if not launcher:
@@ -679,7 +819,7 @@ def main():
     args = parser.parse_args()
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sys.exit("Start Lazy Remote from your user account without sudo.")
-    server = bridge = worker = instance = None
+    server = bridge = worker = instance = share = None
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
@@ -696,6 +836,8 @@ def main():
             raise RuntimeError("Lazy Remote is already running. Stop the other instance first.") from None
         context, directory, names, fingerprint = tls_identity(address, hostname, args.renew_certificate, state)
         server.configure_tls(context, names)
+        share = CertificateShare(address, directory, fingerprint,
+                                 on_change=launcher_event if args.launcher else terminal_event)
         bridge = open_input(args.launcher)
         remote = server.remote = Remote(
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
@@ -719,11 +861,12 @@ def main():
             print(f"Local root SHA-256 fingerprint: {fingerprint}")
             print(f"Pairing code (one use, 10 minutes)  {code}", flush=True)
             if sys.stdin.isatty():
-                print("Press Enter to forget the browser and get a new code. Press Ctrl+C to stop.", flush=True)
+                print("Press Enter to forget the browser and get a new code. Type share_certificate to offer\n"
+                      "the phone certificate over Wi-Fi for 2 minutes. Press Ctrl+C to stop.", flush=True)
         worker = threading.Thread(target=remote.maintain, args=(stop,), daemon=True)
         worker.start()
         if args.launcher or sys.stdin.isatty():
-            threading.Thread(target=local_controls, args=(remote, stop, args.launcher), daemon=True).start()
+            threading.Thread(target=local_controls, args=(remote, stop, args.launcher, share), daemon=True).start()
         server.timeout = 0.5
         while not stop.is_set():
             server.handle_request()
@@ -743,6 +886,8 @@ def main():
             with server.remote.lock:
                 server.remote.pairing.clear_codes()
                 server.remote.revoke()
+        if share:
+            share.stop()
         if bridge:
             bridge.close()
         if instance:

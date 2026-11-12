@@ -16,9 +16,12 @@ private struct ServerEvent: Decodable {
     let match: String?
     let approved: Bool?
     let message: String?
+    let url: String?
+    let seconds: Int?
 
     enum CodingKeys: String, CodingKey {
         case event, urls, certificates, fingerprint, loopback, code, qr, paired, remembered, match, approved, message
+        case url, seconds
         case inputReady = "input_ready"
     }
 }
@@ -50,6 +53,9 @@ private final class Launcher: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var certificates: String?
     @Published private(set) var fingerprint: String?
+    /// Plain-HTTP link offering the phone certificate, while a share is open.
+    @Published private(set) var shareURL: String?
+    @Published private(set) var shareUntil: Date?
     /// Off by default: the server stops after 30 minutes without phone activity.
     @Published var keepRunning = UserDefaults.standard.bool(forKey: "keepRunning") {
         didSet { UserDefaults.standard.set(keepRunning, forKey: "keepRunning") }
@@ -191,6 +197,16 @@ private final class Launcher: ObservableObject {
             return
         }
         guard phase == .starting || phase == .running else { return }
+        if event.event == "certificate_share" {
+            shareURL = event.url
+            shareUntil = Date().addingTimeInterval(TimeInterval(event.seconds ?? 120))
+            return
+        }
+        if event.event == "certificate_share_ended" {
+            shareURL = nil
+            shareUntil = nil
+            return
+        }
         if event.event == "permission" {
             inputReady = event.inputReady
             return
@@ -236,6 +252,8 @@ private final class Launcher: ObservableObject {
         inputReady = nil
         certificates = nil
         fingerprint = nil
+        shareURL = nil
+        shareUntil = nil
     }
 }
 
@@ -314,6 +332,7 @@ private struct SetupGuide: View {
                         "Choose Install a certificate → CA certificate, then pick the file.",
                     ])
                 }
+                wifiShare
                 if let fingerprint = launcher.fingerprint {
                     Text("Fingerprint, to check on the phone: \(fingerprint)")
                         .font(.caption.monospaced())
@@ -337,6 +356,34 @@ private struct SetupGuide: View {
         }
         .padding(24)
         .frame(width: 520, alignment: .leading)
+    }
+
+    /// Offers the certificate over Wi-Fi for two minutes, for phones that can't
+    /// receive AirDrop. The page and this window both show the fingerprint.
+    @ViewBuilder
+    private var wifiShare: some View {
+        if launcher.phase == .running {
+            if let url = launcher.shareURL {
+                HStack(alignment: .top, spacing: 14) {
+                    PairingQR(payload: url)
+                        .scaleEffect(0.7, anchor: .topLeading)
+                        .frame(width: 124, height: 124, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Scan with the phone camera to download.")
+                        if let until = launcher.shareUntil {
+                            Text("Stops \(until, style: .relative), or after two downloads.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Plain Wi-Fi link: install only if the fingerprint on the phone matches the one below.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Stop sharing") { launcher.send("stop_certificate_share") }
+                    }
+                }
+            } else {
+                Button("Or send over Wi-Fi with a QR code") { launcher.send("share_certificate") }
+            }
+        }
     }
 
     private func step<Content: View>(_ number: Int, _ title: String, @ViewBuilder content: () -> Content) -> some View {

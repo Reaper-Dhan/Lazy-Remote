@@ -6,11 +6,15 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 
 import input_backends
 from input_backends import KEYMAP, InputBackend, LinuxInput, WindowsInput
-from server import KEYS, SWIPE_SHORTCUTS, LocalInput
+from server import KEYS, SWIPE_SHORTCUTS, CertificateShare, LocalInput
 from auth import RequestError
 import tls_setup
 
@@ -269,6 +273,57 @@ class CertificateTests(unittest.TestCase):
             ).stdout.strip().split("=", 1)[1]
             self.assertEqual(tls_setup.fingerprint(directory / "root.pem"), expected)
             self.assertFalse(tls_setup.certificate_expired(directory / "server.pem"))
+
+
+class CertificateShareTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp())
+        tls_setup.make_identity(self.directory, ["127.0.0.1"])
+        self.events = []
+        self.ended = threading.Event()
+
+        def record(event, **data):
+            self.events.append((event, data))
+            if event == "certificate_share_ended":
+                self.ended.set()
+        self.share = CertificateShare("127.0.0.1", self.directory, "AA:BB", on_change=record)
+        self.addCleanup(self.share.stop)
+
+    def get(self, url):
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as error:
+            error.close()
+            return error.code, b""
+
+    def test_offers_public_files_only_under_its_secret_link_and_ends_after_two_downloads(self):
+        url = self.share.start()
+        self.assertEqual(self.events[0][0], "certificate_share")
+        self.assertEqual(self.events[0][1]["url"], url)
+        base = url.rsplit("/", 2)[0]
+        self.assertEqual(self.get(base + "/")[0], 404)
+        self.assertEqual(self.get(base + "/wrong-token/Lazy-Remote-Root.cer")[0], 404)
+        self.assertEqual(self.get(url + "server.key")[0], 404)
+        self.assertEqual(self.get(url + "../server.key")[0], 404)
+        status, page = self.get(url)
+        self.assertEqual(status, 200)
+        self.assertIn(b"AA:BB", page)
+        self.assertEqual(self.get(url + "Lazy-Remote.mobileconfig"),
+                         (200, (self.directory / "Lazy Remote.mobileconfig").read_bytes()))
+        self.assertEqual(self.get(url + "Lazy-Remote-Root.cer"),
+                         (200, (self.directory / "Lazy Remote Root.cer").read_bytes()))
+        self.assertTrue(self.ended.wait(5))
+        with self.assertRaises(OSError):
+            urllib.request.urlopen(url, timeout=2)
+
+    def test_stop_ends_the_share(self):
+        url = self.share.start()
+        self.share.stop()
+        self.assertTrue(self.ended.wait(5))
+        time.sleep(0.7)  # let the serving thread notice and close its socket
+        with self.assertRaises(OSError):
+            urllib.request.urlopen(url, timeout=2)
 
 
 class FactoryTests(unittest.TestCase):
