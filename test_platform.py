@@ -173,6 +173,26 @@ class LinuxTests(unittest.TestCase):
         ])
 
 
+class LockCheckTests(unittest.TestCase):
+    def check(self, answers):
+        calls = []
+
+        def run(command):
+            calls.append(command[0])
+            stdout, code = answers[command[0]]
+            return subprocess.CompletedProcess(command, code, stdout=stdout, stderr="")
+        return input_backends._LockCheck(run)(), calls
+
+    def test_logind_lock_hint(self):
+        self.assertEqual(self.check({"loginctl": ("yes\n", 0)}), (True, ["loginctl"]))
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "POSIX only")
+    def test_screen_locker_without_logind(self):
+        # Sway, i3 and Hyprland leave LockedHint unset, so a running locker counts.
+        self.assertTrue(self.check({"loginctl": ("", 1), "pgrep": ("1234\n", 0)})[0])
+        self.assertFalse(self.check({"loginctl": ("no\n", 0), "pgrep": ("", 1)})[0])
+
+
 class CertificateTests(unittest.TestCase):
     @unittest.skipIf(shutil.which("openssl") is None, "openssl is not installed")
     def test_root_only_vouches_for_local_names(self):

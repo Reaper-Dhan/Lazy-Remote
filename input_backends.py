@@ -385,10 +385,17 @@ class LinuxInput(InputBackend):
 
 
 class _LockCheck:
-    """Asks systemd-logind whether this desktop session is locked, at most every 2 seconds."""
+    """Reports whether this desktop session is locked, checked at most every 2 seconds.
 
-    def __init__(self):
-        self.checked = 0.0
+    systemd-logind's LockedHint covers GNOME, KDE and others. Window managers such
+    as Sway, i3 and Hyprland do not set it, so a running screen locker counts too.
+    """
+
+    LOCKERS = ("swaylock", "hyprlock", "gtklock", "waylock", "i3lock", "xsecurelock", "slock", "xlock")
+
+    def __init__(self, run=None):
+        self.run = run or (lambda command: subprocess.run(command, capture_output=True, text=True, timeout=1))
+        self.checked = float("-inf")
         self.value = False
 
     def __call__(self):
@@ -396,14 +403,23 @@ class _LockCheck:
         if now - self.checked < 2:
             return self.value
         self.checked = now
-        session = os.environ.get("XDG_SESSION_ID")
-        command = ["loginctl", "show-session", session or "auto", "-p", "LockedHint", "--value"]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=1)
-            self.value = result.stdout.strip() == "yes"
-        except (OSError, subprocess.SubprocessError):  # No logind: nothing to check.
-            self.value = False
+        self.value = self._logind() or self._locker_running()
         return self.value
+
+    def _logind(self):
+        session = os.environ.get("XDG_SESSION_ID") or "auto"
+        try:
+            result = self.run(["loginctl", "show-session", session, "-p", "LockedHint", "--value"])
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.stdout.strip() == "yes"
+
+    def _locker_running(self):
+        try:
+            result = self.run(["pgrep", "-u", str(os.getuid()), "-x", "|".join(self.LOCKERS)])
+        except (OSError, subprocess.SubprocessError, AttributeError):
+            return False
+        return result.returncode == 0
 
 
 session_locked = _LockCheck()
