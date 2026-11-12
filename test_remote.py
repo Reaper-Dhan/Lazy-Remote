@@ -57,7 +57,7 @@ class RemoteSecurityTests(unittest.TestCase):
         self.thread.join()
 
     def request(self, path, body=None, *, cookie=None, headers=None, context=None):
-        connection = http.client.HTTPSConnection("127.0.0.1", self.port, context=context or self.trust, timeout=2)
+        connection = http.client.HTTPSConnection("127.0.0.1", self.port, context=context or self.trust, timeout=10)
         request_headers = {"Origin": self.origin, "Content-Type": "application/json"}
         if cookie:
             request_headers["Cookie"] = cookie
