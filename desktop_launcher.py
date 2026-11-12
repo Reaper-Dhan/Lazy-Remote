@@ -48,6 +48,8 @@ class App:
         except tk.TclError:
             pass
         style = ttk.Style(self.root)
+        if IS_LINUX and "clam" in style.theme_names():
+            style.theme_use("clam")  # Windows keeps its native theme.
         style.configure("Title.TLabel", font=("TkDefaultFont", 16, "bold"))
         style.configure("Head.TLabel", font=("TkDefaultFont", 11, "bold"))
         style.configure("Match.TLabel", font=("TkFixedFont", 28, "bold"))
