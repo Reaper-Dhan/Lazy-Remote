@@ -41,6 +41,10 @@ private final class Launcher: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var certificates: String?
     @Published private(set) var fingerprint: String?
+    /// Off by default: the server stops after 30 minutes without phone activity.
+    @Published var keepRunning = UserDefaults.standard.bool(forKey: "keepRunning") {
+        didSet { UserDefaults.standard.set(keepRunning, forKey: "keepRunning") }
+    }
 
     private var process: Process?
     private var controls: FileHandle?
@@ -100,7 +104,7 @@ private final class Launcher: ObservableObject {
         let input = Pipe()
         let output = Pipe()
         server.executableURL = URL(fileURLWithPath: python)
-        server.arguments = ["-B", "-u", script.path, "--launcher"]
+        server.arguments = ["-B", "-u", script.path, "--launcher"] + (keepRunning ? ["--keep-running"] : [])
         server.currentDirectoryURL = project
         server.standardInput = input
         server.standardOutput = output
@@ -394,6 +398,12 @@ private struct LauncherView: View {
                         Button("Setup guide") { showGuide = true }
                             .controlSize(.large)
                     }
+                    Toggle("Keep running when the phone is idle", isOn: $launcher.keepRunning)
+                    Text(launcher.keepRunning
+                         ? "The server stays on until you stop it. The phone still locks after 5 minutes."
+                         : "The server stops after 30 minutes without phone activity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             case .starting, .stopping:
                 ProgressView().controlSize(.small)

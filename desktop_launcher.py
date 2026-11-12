@@ -21,10 +21,14 @@ def run_server():
     server.main()
 
 
-def server_command():
+KEEP_RUNNING = default_state_dir() / ".keep-running"
+
+
+def server_command(keep_running=False):
+    extra = ["--keep-running"] if keep_running else []
     if getattr(sys, "frozen", False):
-        return [sys.executable, "--server", "--launcher"]
-    return [sys.executable, "-B", "-u", str(Path(__file__).resolve().with_name("server.py")), "--launcher"]
+        return [sys.executable, "--server", "--launcher", *extra]
+    return [sys.executable, "-B", "-u", str(Path(__file__).resolve().with_name("server.py")), "--launcher", *extra]
 
 
 class App:
@@ -54,6 +58,7 @@ class App:
         self.guide = None
         self.show_code = tk.BooleanVar(value=False)
         self.address = tk.StringVar()
+        self.keep_running = tk.BooleanVar(value=KEEP_RUNNING.exists())
         self.reset_state()
         self.phase = "stopped"
         self.notice = None
@@ -75,7 +80,7 @@ class App:
         flags = 0x08000000 if IS_WINDOWS else 0  # CREATE_NO_WINDOW: no console window.
         try:
             self.process = subprocess.Popen(
-                server_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                server_command(self.keep_running.get()), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, creationflags=flags,
             )
         except OSError as error:
@@ -204,6 +209,11 @@ class App:
             row.pack(anchor="w")
             ttk.Button(row, text="Start server", command=self.start).pack(side="left")
             ttk.Button(row, text="Setup guide", command=self.open_guide).pack(side="left", padx=8)
+            ttk.Checkbutton(body, text="Keep running when the phone is idle", variable=self.keep_running,
+                            command=self.save_keep_running).pack(anchor="w", pady=(12, 0))
+            self.label(body, "The server stays on until you stop it. The phone still locks after 5 minutes."
+                       if self.keep_running.get() else
+                       "The server stops after 30 minutes without phone activity.", "Muted.TLabel")
             return
         if self.phase != "running":
             return
@@ -230,6 +240,17 @@ class App:
         if self.loopback:
             self.label(body, "Connect this PC and your phone to the same private network, then restart the server.",
                        "Muted.TLabel")
+
+    def save_keep_running(self):
+        try:
+            if self.keep_running.get():
+                KEEP_RUNNING.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                KEEP_RUNNING.touch()
+            else:
+                KEEP_RUNNING.unlink(missing_ok=True)
+        except OSError:
+            pass
+        self.render()
 
     def copy_address(self):
         self.root.clipboard_clear()

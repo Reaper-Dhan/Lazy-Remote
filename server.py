@@ -225,11 +225,12 @@ class InputBridge:
 
 
 class Remote:
-    def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None):
+    def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None, stop_when_idle=True):
         self.bridge = bridge
         self.pairing = Pairing(browser_path)
         self.on_change = on_change
         self.gesture_reader = gesture_reader
+        self.stop_when_idle = stop_when_idle
         self.gestures = gesture_reader() if gesture_reader else DEFAULT_GESTURES
         self.motion_streams = {}
         self.lock = threading.Lock()
@@ -316,7 +317,7 @@ class Remote:
             return self.start_session(now), device
 
     def expire(self, now):
-        if now - self.last_phone_activity >= SERVER_IDLE_TIMEOUT:
+        if self.stop_when_idle and now - self.last_phone_activity >= SERVER_IDLE_TIMEOUT:
             self.pairing.pending = None
             self.pairing.clear_codes()
             self.revoke()
@@ -671,6 +672,8 @@ class LocalInput:
 def main():
     parser = argparse.ArgumentParser(description="Control this computer from one paired browser over HTTPS.")
     parser.add_argument("--renew-certificate", action="store_true", help="Replace this computer's HTTPS identity.")
+    parser.add_argument("--keep-running", action="store_true",
+                        help="Do not stop after 30 minutes without phone activity. The phone still locks after 5.")
     parser.add_argument("--launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -695,7 +698,7 @@ def main():
         bridge = open_input(args.launcher)
         remote = server.remote = Remote(
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
-            gesture_reader=mac_gesture_settings if IS_MAC else None,
+            gesture_reader=mac_gesture_settings if IS_MAC else None, stop_when_idle=not args.keep_running,
         )
         code = remote.new_code(publish=False)
         urls = [f"https://{host}/" for host in sorted(server.hosts, key=lambda host: ".local" not in host)]

@@ -159,6 +159,14 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertTrue(stop.is_set())
         self.assertEqual(events, [("notice", {"message": SERVER_IDLE_MESSAGE})])
 
+    def test_keep_running_skips_the_idle_stop_but_still_locks_the_phone(self):
+        self.remote.stop_when_idle = False
+        cookie = self.pair().split(";", 1)[0]
+        self.remote.last_phone_activity -= SERVER_IDLE_TIMEOUT
+        self.remote.last_command -= IDLE_LIFETIME
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "space"}, cookie=cookie)[0], 401)
+        self.assertIsNotNone(self.remote.snapshot()["code"])  # still serving, with a fresh QR code
+
     def test_pairing_expiry_and_attempt_limit(self):
         self.remote.pairing.until = time.monotonic() - 1
         self.assertEqual(self.request("/api/pair", {"code": self.code})[0], 409)
