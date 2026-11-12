@@ -86,7 +86,7 @@ let toastTimer;
 const pending = [];
 const foregroundRequests = new Set();
 const gestures = {
-  tap: true, secondary_tap: true, scroll: true, horizontal_scroll: true,
+  scroll: true, horizontal_scroll: true,
   natural_scroll: true, pinch_zoom: false, three_finger_drag: false, swipes: []
 };
 
@@ -554,6 +554,8 @@ checkConnection();
 setInterval(checkConnection, 2000);
 
 // Touchscreen, mouse, and pen input.
+const trackpadContacts = new Map();
+const TAP_SLOP = 12;
 let touchGesture;
 let lastTap;
 let stripY;
@@ -588,6 +590,7 @@ function releaseGestureDrag() {
 }
 
 function resetGesture() {
+  trackpadContacts.clear();
   touchGesture = lastTap = stripY = pointer = undefined;
   gestureDrag = false;
   trackpad.classList.remove('active-touch');
@@ -627,13 +630,49 @@ for (const event of ['touchend', 'touchcancel']) {
   });
 }
 
+function activeTrackpadTouches(event) {
+  return Array.from(event.touches).filter(touch => trackpadContacts.has(touch.identifier));
+}
+
+function recordTapMovement(touches) {
+  for (const touch of touches) {
+    const start = trackpadContacts.get(touch.identifier);
+    if (start && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) >= TAP_SLOP) {
+      touchGesture.tapMoved = true;
+    }
+  }
+}
+
+function recognizeMacSwipe(sample) {
+  if (touchGesture.mode || dragLocked || dragPending) return;
+  const x = sample.x - touchGesture.origin.x;
+  const y = sample.y - touchGesture.origin.y;
+  const horizontal = Math.abs(x) >= 36 && Math.abs(x) > Math.abs(y) * 1.25;
+  const vertical = Math.abs(y) >= 36 && Math.abs(y) > Math.abs(x) * 1.25;
+  const swipe = horizontal ? (x < 0 ? 'swipe_left' : 'swipe_right')
+    : vertical ? (y < 0 ? 'swipe_up' : 'swipe_down') : null;
+  if (swipe && gestures.swipes.includes(swipe)) {
+    touchGesture.mode = 'swipe';
+    touchGesture.used = true;
+    sendKey(swipe);
+  }
+}
+
 trackpad.addEventListener('touchstart', event => {
   event.preventDefault();
-  if (!ready || !event.targetTouches.length) return;
-  const sample = touchSample(event.targetTouches);
-  if (!touchGesture) {
-    touchGesture = { last: sample, max: 0, started: Date.now(), moved: 0 };
+  if (!ready) return;
+  for (const touch of event.changedTouches) {
+    if (trackpad.contains(touch.target) && !scrollStrip.contains(touch.target)) {
+      trackpadContacts.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
+    }
   }
+  const touches = activeTrackpadTouches(event);
+  if (!touches.length) return;
+  const sample = touchSample(touches);
+  if (!touchGesture) {
+    touchGesture = { max: 0, started: Date.now(), tapMoved: false, used: false };
+  }
+  recordTapMovement(touches);
   touchGesture.last = sample;
   touchGesture.max = Math.max(touchGesture.max, sample.count);
   touchGesture.origin = sample;
@@ -645,30 +684,42 @@ trackpad.addEventListener('touchstart', event => {
 
 trackpad.addEventListener('touchmove', event => {
   event.preventDefault();
-  if (!ready || !touchGesture || !event.targetTouches.length) return;
-  const sample = touchSample(event.targetTouches);
+  if (!ready || !touchGesture) return;
+  const touches = activeTrackpadTouches(event);
+  if (!touches.length) return;
+  recordTapMovement(touches);
+  const sample = touchSample(touches);
   const previous = touchGesture.last;
   touchGesture.last = sample;
   if (sample.count !== previous.count || sample.count !== touchGesture.max) return;
 
   const dx = sample.x - previous.x;
   const dy = sample.y - previous.y;
-  const distance = Math.hypot(dx, dy);
-  touchGesture.moved += Math.max(distance, Math.abs(sample.span - previous.span));
+  const origin = touchGesture.origin;
+  const panX = sample.x - origin.x;
+  const panY = sample.y - origin.y;
+  const pan = Math.hypot(panX, panY);
   if (sample.count === 1) {
-    addMovement(dx, dy);
+    if (touchGesture.mode === 'move') {
+      addMovement(dx, dy);
+    } else if (pan >= 7) {
+      touchGesture.mode = 'move';
+      touchGesture.used = true;
+      addMovement(panX, panY);
+    }
+  } else if (sample.count === 2 && swipeModeEnabled()) {
+    recognizeMacSwipe(sample);
   } else if (sample.count === 2) {
-    const zoom = Math.log(sample.span / previous.span);
-    touchGesture.zoom += zoom;
+    touchGesture.zoom += Math.log(sample.span / previous.span);
     if (!touchGesture.mode) {
-      const origin = touchGesture.origin;
-      const pan = Math.hypot(sample.x - origin.x, sample.y - origin.y);
       const spread = Math.abs(sample.span - origin.span);
-      if (gestures.pinch_zoom && spread >= 8 && spread > pan * 1.25) {
+      if (gestures.pinch_zoom && spread >= 12 && spread > pan * 1.25) {
         touchGesture.mode = 'pinch';
-      } else if (pan >= 5) {
+        touchGesture.used = true;
+      } else if (gestures.scroll && pan >= 10) {
         touchGesture.mode = 'scroll';
-        addScroll((sample.x - origin.x) * 2.2, (sample.y - origin.y) * 2.2);
+        touchGesture.used = true;
+        addScroll(panX * 2.2, panY * 2.2);
         return;
       }
     }
@@ -681,32 +732,34 @@ trackpad.addEventListener('touchmove', event => {
   } else if (sample.count === 3) {
     if (gestures.three_finger_drag) {
       startGestureDrag();
-      if (gestureDrag || dragLocked) addMovement(dx, dy);
-    } else if (!touchGesture.mode && !dragLocked && !dragPending) {
-      const x = sample.x - touchGesture.origin.x;
-      const y = sample.y - touchGesture.origin.y;
-      const horizontal = Math.abs(x) >= 42 && Math.abs(x) > Math.abs(y) * 1.35;
-      const vertical = Math.abs(y) >= 42 && Math.abs(y) > Math.abs(x) * 1.35;
-      const swipe = horizontal ? (x < 0 ? 'swipe_left' : 'swipe_right')
-        : vertical ? (y < 0 ? 'swipe_up' : 'swipe_down') : null;
-      if (swipe && gestures.swipes.includes(swipe)) {
-        touchGesture.mode = 'swipe';
-        sendKey(swipe);
+      if (gestureDrag || dragLocked) {
+        touchGesture.used = true;
+        addMovement(dx, dy);
       }
+    } else {
+      recognizeMacSwipe(sample);
     }
   }
 }, { passive: false });
 
 trackpad.addEventListener('touchend', event => {
   event.preventDefault();
-  if (event.targetTouches.length < 3) releaseGestureDrag();
-  if (event.targetTouches.length) return;
+  if (!touchGesture) return;
+  recordTapMovement(event.changedTouches);
+  for (const touch of event.changedTouches) trackpadContacts.delete(touch.identifier);
+  const remaining = activeTrackpadTouches(event).length;
+  if (remaining < 3) releaseGestureDrag();
+  if (remaining) return;
   trackpad.classList.remove('active-touch');
   const touch = touchGesture;
   touchGesture = undefined;
-  if (!ready || !touch || touch.mode || touch.moved >= 12 || Date.now() - touch.started >= 280) return;
+  trackpadContacts.clear();
+  if (!ready || touch.used || touch.tapMoved || Date.now() - touch.started > 420) {
+    lastTap = undefined;
+    return;
+  }
 
-  if (touch.max === 1 && gestures.tap) {
+  if (touch.max === 1) {
     const now = Date.now();
     const { x, y } = touch.last;
     const double = lastTap && now - lastTap.time < 300 && Math.hypot(x - lastTap.x, y - lastTap.y) < 24;
@@ -716,8 +769,9 @@ trackpad.addEventListener('touchend', event => {
       vibrate(15);
       lastTap = double ? undefined : { x, y, time: now };
     }
-  } else if (touch.max === 2 && gestures.secondary_tap) {
-    sendClick('right', 1, 'Right Click');
+  } else if (touch.max === 2) {
+    lastTap = undefined;
+    sendClick('right', 1, 'Right click');
   }
 }, { passive: false });
 
