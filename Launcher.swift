@@ -6,6 +6,7 @@ private struct ServerEvent: Decodable {
     let event: String
     let urls: [String]?
     let certificates: String?
+    let fingerprint: String?
     let loopback: Bool?
     let inputReady: Bool?
     let code: String?
@@ -17,7 +18,7 @@ private struct ServerEvent: Decodable {
     let message: String?
 
     enum CodingKeys: String, CodingKey {
-        case event, urls, certificates, loopback, code, qr, paired, remembered, match, approved, message
+        case event, urls, certificates, fingerprint, loopback, code, qr, paired, remembered, match, approved, message
         case inputReady = "input_ready"
     }
 }
@@ -39,6 +40,7 @@ private final class Launcher: ObservableObject {
     @Published private(set) var inputReady: Bool?
     @Published private(set) var notice: String?
     @Published private(set) var certificates: String?
+    @Published private(set) var fingerprint: String?
 
     private var process: Process?
     private var controls: FileHandle?
@@ -165,6 +167,7 @@ private final class Launcher: ObservableObject {
             urls = event.urls ?? []
             address = urls.first ?? ""
             certificates = event.certificates
+            fingerprint = event.fingerprint
             loopback = event.loopback == true
             inputReady = event.inputReady
             phase = .running
@@ -195,6 +198,7 @@ private final class Launcher: ObservableObject {
         approved = false
         inputReady = nil
         certificates = nil
+        fingerprint = nil
     }
 }
 

@@ -665,7 +665,7 @@ def main():
         loopback = address == "127.0.0.1"
         if args.launcher:
             launcher_event(
-                "ready", urls=urls, certificates=str(directory), loopback=loopback,
+                "ready", urls=urls, certificates=str(directory), fingerprint=fingerprint, loopback=loopback,
                 input_ready=remote.input_permission(), **remote.snapshot()
             )
         else:
