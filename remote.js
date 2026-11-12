@@ -5,6 +5,7 @@ const speedValue = document.getElementById('speedValue');
 const gestureHint = document.getElementById('gestureHint');
 const kbInput = document.getElementById('kbInput');
 const dragBtn = document.getElementById('dragBtn');
+const dragLabel = document.getElementById('dragLabel');
 const toast = document.getElementById('toast');
 const statusDot = document.getElementById('statusDot');
 const connectionStatus = document.getElementById('connectionStatus');
@@ -117,7 +118,6 @@ function showToast(message) {
 function toggleDrawer(open, restoreFocus = true) {
   if (open && !ready) return;
   drawer.hidden = !open;
-  drawer.classList.toggle('open', open);
   drawerTrigger.setAttribute('aria-expanded', String(open));
   if (open) {
     drawer.querySelector('[data-drawer="close"]').focus();
@@ -134,7 +134,7 @@ function updateDrag(active) {
   dragLocked = active;
   dragBtn.classList.toggle('drag-locked', active);
   dragBtn.setAttribute('aria-pressed', String(active));
-  dragBtn.textContent = active ? 'Release' : 'Hold';
+  dragLabel.textContent = active ? 'Release' : 'Hold';
 }
 
 function renderState(state, message) {
@@ -145,6 +145,7 @@ function renderState(state, message) {
   remoteControls.hidden = !paired;
   remoteControls.inert = !ready;
   controlSettings.hidden = !ready;
+  drawerTrigger.hidden = !ready;
   pairPanel.hidden = state !== 'pair' && state !== 'pending';
   pairForm.hidden = state === 'pending';
   pendingPanel.hidden = state !== 'pending';
@@ -486,7 +487,22 @@ drawer.addEventListener('click', event => {
   if (event.target === drawer) toggleDrawer(false);
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !drawer.hidden) toggleDrawer(false);
+  if (drawer.hidden) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    toggleDrawer(false);
+  } else if (event.key === 'Tab') {
+    const buttons = drawer.querySelectorAll('button:not([hidden]):not(:disabled)');
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (event.shiftKey && event.target === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && event.target === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 });
 
 function submitText(enter = false) {

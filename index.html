@@ -2,37 +2,74 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#10130f" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Lazy Remote</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/logo.svg" />
+  <link rel="apple-touch-icon" href="/assets/touch-icon.png" />
   <link rel="stylesheet" href="/remote.css" />
   <script src="/remote.js" defer></script>
 </head>
 <body>
-
+  <svg class="icon-library" width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="icon-close-tab" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 10 4 4m0-4-4 4"/></symbol>
+      <symbol id="icon-back" viewBox="0 0 24 24"><path d="m12 6-6 6 6 6M6 12h14"/></symbol>
+      <symbol id="icon-forward" viewBox="0 0 24 24"><path d="m12 6 6 6-6 6m6-6H4"/></symbol>
+      <symbol id="icon-next" viewBox="0 0 24 24"><path d="m5 5 10 7-10 7V5Zm14 0v14"/></symbol>
+      <symbol id="icon-rewind" viewBox="0 0 24 24"><path d="m11 6-8 6 8 6V6Zm10 0-8 6 8 6V6Z"/></symbol>
+      <symbol id="icon-fast-forward" viewBox="0 0 24 24"><path d="m3 6 8 6-8 6V6Zm10 0 8 6-8 6V6Z"/></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m4 5 10 7-10 7V5Zm13 1v12m4-12v12"/></symbol>
+      <symbol id="icon-fullscreen" viewBox="0 0 24 24"><path d="M8 4H4v4m12-4h4v4m0 8v4h-4M4 16v4h4"/></symbol>
+      <symbol id="icon-exit" viewBox="0 0 24 24"><path d="M8 4v4H4m12-4v4h4m0 8h-4v4M4 16h4v4"/></symbol>
+      <symbol id="icon-volume-down" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 7h5"/></symbol>
+      <symbol id="icon-volume-up" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 7h5m-2.5-2.5v5"/></symbol>
+      <symbol id="icon-volume-mute" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 5 4 4m0-4-4 4"/></symbol>
+      <symbol id="icon-up" viewBox="0 0 24 24"><path d="m6 13 6-6 6 6m-6-6v13"/></symbol>
+      <symbol id="icon-down" viewBox="0 0 24 24"><path d="m6 11 6 6 6-6m-6 6V4"/></symbol>
+      <symbol id="icon-cursor" viewBox="0 0 24 24"><path d="m4 3 16 11-7 1-4 6L4 3Z"/></symbol>
+      <symbol id="icon-scroll" viewBox="0 0 24 24"><path d="m8 8 4-4 4 4m-8 8 4 4 4-4m-4-6v4"/></symbol>
+      <symbol id="icon-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M12 10h.01M17 10h.01M8 14h8"/></symbol>
+      <symbol id="icon-backspace" viewBox="0 0 24 24"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7 6-7Zm3 4 5 6m0-6-5 6"/></symbol>
+      <symbol id="icon-return" viewBox="0 0 24 24"><path d="M20 5v6a3 3 0 0 1-3 3H4m5-5-5 5 5 5"/></symbol>
+      <symbol id="icon-click-left" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M6 10h12m-6-7v7M9 6h.01"/></symbol>
+      <symbol id="icon-click-right" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M6 10h12m-6-7v7m3-4h.01"/></symbol>
+      <symbol id="icon-hold" viewBox="0 0 24 24"><path d="M9 13V6a2 2 0 0 1 4 0v5l3-1a3 3 0 0 1 4 3v2a6 6 0 0 1-6 6h-2a5 5 0 0 1-4-2l-3-4a2 2 0 0 1 3-2l1 1"/></symbol>
+      <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+      <symbol id="icon-windows" viewBox="0 0 24 24"><rect x="4" y="8" width="13" height="12" rx="2"/><path d="M8 4h10a2 2 0 0 1 2 2v10"/></symbol>
+      <symbol id="icon-restore" viewBox="0 0 24 24"><path d="M5 8V4m0 4h4m-4 0a7 7 0 1 1-1 7"/></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 1 0 0 6m0-10v4h-4"/></symbol>
+      <symbol id="icon-captions" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 10a2 2 0 1 0 0 4m7-4a2 2 0 1 0 0 4"/></symbol>
+      <symbol id="icon-brightness" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/></symbol>
+    </defs>
+  </svg>
   <div class="toast" id="toast" role="status"></div>
 
-  <!-- Header -->
-  <div class="header">
+  <header class="header">
     <div class="brand">
-      <span>Lazy Remote</span>
+      <img src="/assets/logo.svg" alt="" width="44" height="44" />
+      <div class="brand-copy">
+        <span class="brand-name">Lazy Remote</span>
+        <div class="connection-status" role="status">
+          <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+          <span id="connectionStatus">Checking connection…</span>
+        </div>
+      </div>
     </div>
-    <div class="sensitivity-wrap" id="controlSettings" hidden>
-      <label for="speedSlider">Speed</label>
-      <input type="range" id="speedSlider" min="0.8" max="4.0" step="0.2" value="2.0" />
-      <output id="speedValue" for="speedSlider">2.0×</output>
-      <button class="btn compact-btn" data-drawer="open" aria-controls="drawerBackdrop" aria-expanded="false">More</button>
+    <div class="header-actions">
+      <button class="btn header-btn" type="button" data-drawer="open" aria-controls="drawerBackdrop"
+        aria-expanded="false" aria-label="More shortcuts" hidden>
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-more"/></svg><span>More</span>
+      </button>
+      <button class="btn header-btn" id="disconnectBtn" type="button" aria-label="Lock remote" hidden>
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"/></svg><span>Lock</span>
+      </button>
     </div>
-  </div>
-
-  <div class="connection-bar">
-    <div class="connection-status" role="status">
-      <span class="status-dot" id="statusDot" aria-hidden="true"></span>
-      <span id="connectionStatus">Checking connection…</span>
-    </div>
-    <button class="btn compact-btn" id="disconnectBtn" type="button" hidden>Lock remote</button>
-  </div>
+  </header>
 
   <main class="pair-panel" id="pairPanel" hidden>
     <form id="pairForm" method="post" action="/api/pair">
@@ -60,158 +97,97 @@
   </main>
 
   <main id="remoteControls" class="remote-controls" aria-label="Mac controls" inert hidden>
-    <!-- Primary Anime / Movie Couch Actions -->
-    <div class="top-actions">
-      <button class="btn btn-danger" data-key="close_tab" data-message="Closed Ad Tab (⌘W)">
-        ✖ Close Ad Tab
-      </button>
-      <button class="btn" data-key="prev_tab" data-message="Switched Tab ◀">
-        ◀ Prev Tab
-      </button>
-      <button class="btn btn-accent" data-key="next_video" data-message="Next Episode (Shift+N)">
-        ⏭ Next Video
-      </button>
-    </div>
-
-    <!-- Media & Playback Strip -->
-    <div class="media-grid">
-      <button class="btn media-btn" data-key="left">
-        <span class="icon">⏪</span>
-        <span class="lbl">-5s / ◀</span>
-      </button>
-      <button class="btn media-btn" data-key="space">
-        <span class="icon">⏯️</span>
-        <span class="lbl">Play/Pause</span>
-      </button>
-      <button class="btn media-btn" data-key="right">
-        <span class="icon">⏩</span>
-        <span class="lbl">+5s / ▶</span>
-      </button>
-      <button class="btn media-btn" data-key="f">
-        <span class="icon">⛶</span>
-        <span class="lbl">Fullscreen</span>
-      </button>
-      <button class="btn media-btn" data-key="escape">
-        <span class="icon">⎋</span>
-        <span class="lbl">Esc</span>
-      </button>
-    </div>
-
-    <div class="media-grid">
-      <button class="btn media-btn" data-key="vol_down">
-        <span class="icon">🔉</span>
-        <span class="lbl">Vol -</span>
-      </button>
-      <button class="btn media-btn" data-key="vol_up">
-        <span class="icon">🔊</span>
-        <span class="lbl">Vol +</span>
-      </button>
-      <button class="btn media-btn" data-key="vol_mute">
-        <span class="icon">🔇</span>
-        <span class="lbl">Mute</span>
-      </button>
-      <button class="btn media-btn" data-key="up">
-        <span class="icon">🔼</span>
-        <span class="lbl">Player Vol+</span>
-      </button>
-      <button class="btn media-btn" data-key="down">
-        <span class="icon">🔽</span>
-        <span class="lbl">Player Vol-</span>
-      </button>
-    </div>
-
-    <!-- Live Keyboard / Search Bar -->
-    <div class="keyboard-bar">
-      <input
-        type="text"
-        id="kbInput"
-        aria-label="Type on Mac"
-        spellcheck="false"
-        class="keyboard-input"
-        placeholder="Tap to type on Mac (Enter = Search)..."
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="off"
-      />
-      <button class="btn kb-btn" aria-label="Backspace" data-key="backspace">⌫</button>
-      <button class="btn kb-btn btn-accent" id="enterBtn" aria-label="Enter">↵</button>
-    </div>
-
-    <!-- Multi-Touch Trackpad -->
-    <div class="trackpad-container" id="trackpad">
-      <div class="trackpad-hint">
-        <div class="title">Trackpad</div>
-        <div class="sub" id="gestureHint">One finger moves the pointer.</div>
+    <section class="control-panel" aria-labelledby="playbackTitle">
+      <h2 id="playbackTitle">Playback</h2>
+      <div class="media-grid">
+          <button type="button" class="btn media-btn" data-key="left"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-rewind"/></svg><span>−5 sec</span></button>
+          <button type="button" class="btn media-btn" data-key="f"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fullscreen"/></svg><span>Fullscreen</span></button>
+          <button type="button" class="btn media-btn play-btn" data-key="space"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-play"/></svg><span>Play/pause</span></button>
+          <button type="button" class="btn media-btn" data-key="escape"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-exit"/></svg><span>Escape</span></button>
+          <button type="button" class="btn media-btn" data-key="right"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fast-forward"/></svg><span>+5 sec</span></button>
       </div>
-      <div class="scroll-strip" id="scrollStrip">SCROLL</div>
+      <div class="media-grid volume-grid">
+          <button type="button" class="btn media-btn" data-key="vol_down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-down"/></svg><span>Volume −</span></button>
+          <button type="button" class="btn media-btn" data-key="vol_up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-up"/></svg><span>Volume +</span></button>
+          <button type="button" class="btn media-btn" data-key="vol_mute"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-mute"/></svg><span>Mute</span></button>
+          <button type="button" class="btn media-btn" data-key="up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-up"/></svg><span>Player +</span></button>
+          <button type="button" class="btn media-btn" data-key="down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-down"/></svg><span>Player −</span></button>
+      </div>
+    </section>
+
+    <div class="top-actions" role="group" aria-label="Quick actions">
+      <button type="button" class="btn btn-danger" data-key="close_tab" data-message="Closed ad tab (⌘W)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close-tab"/></svg><span>Close ad tab</span></button>
+      <button type="button" class="btn" data-key="prev_tab" data-message="Switched tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Previous tab</span></button>
+      <button type="button" class="btn" data-key="next_video" data-message="Next video (Shift+N)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-next"/></svg><span>Next video</span></button>
     </div>
 
-    <!-- Bottom Mouse Buttons -->
-    <div class="mouse-buttons">
-      <button class="btn mouse-btn" data-click="left" data-count="1">Left Click</button>
-      <button class="btn mouse-btn" id="dragBtn" aria-pressed="false">Hold</button>
-      <button class="btn mouse-btn" data-click="right" data-count="1">Right Click</button>
+    <section class="trackpad-module" aria-labelledby="trackpadTitle">
+      <div class="trackpad-header">
+        <h2 id="trackpadTitle">Trackpad</h2>
+        <div class="sensitivity-wrap" id="controlSettings" hidden>
+          <label for="speedSlider">Speed</label>
+          <input type="range" id="speedSlider" min="0.8" max="4.0" step="0.2" value="2.0" />
+          <output id="speedValue" for="speedSlider">2.0×</output>
+        </div>
+      </div>
+      <div class="trackpad-container" id="trackpad" aria-describedby="gestureHint">
+        <div class="trackpad-hint">
+          <svg class="icon trackpad-cursor" aria-hidden="true" focusable="false"><use href="#icon-cursor"/></svg>
+          <p id="gestureHint">One finger moves the pointer.</p>
+        </div>
+        <div class="scroll-strip" id="scrollStrip">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-scroll"/></svg><span>Scroll</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="mouse-buttons" role="group" aria-label="Mouse buttons">
+      <button type="button" class="btn mouse-btn" data-click="left" data-count="1">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-left"/></svg><span>Left click</span>
+      </button>
+      <button type="button" class="btn mouse-btn" id="dragBtn" aria-pressed="false">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-hold"/></svg><span id="dragLabel">Hold</span>
+      </button>
+      <button type="button" class="btn mouse-btn" data-click="right" data-count="1">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-right"/></svg><span>Right click</span>
+      </button>
     </div>
 
-    <!-- Extra Shortcuts Drawer -->
+    <div class="keyboard-bar">
+      <div class="keyboard-field">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-keyboard"/></svg>
+        <input type="text" id="kbInput" aria-label="Type on Mac" spellcheck="false"
+          class="keyboard-input" placeholder="Type on your Mac" autocomplete="off"
+          autocorrect="off" autocapitalize="off" />
+      </div>
+      <button type="button" class="btn kb-btn" aria-label="Backspace" data-key="backspace"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-backspace"/></svg></button>
+      <button type="button" class="btn kb-btn btn-accent" id="enterBtn" aria-label="Enter"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-return"/></svg></button>
+    </div>
+
     <div class="drawer-backdrop" id="drawerBackdrop" hidden>
-      <div class="drawer">
+      <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="shortcutTitle">
         <div class="drawer-header">
-          <span>Extra Browser &amp; Mac Shortcuts</span>
-          <button class="btn compact-btn" data-drawer="close">Done</button>
+          <h2 id="shortcutTitle">Shortcuts</h2>
+          <button type="button" class="btn compact-btn" data-drawer="close">Done</button>
         </div>
         <div class="drawer-grid">
-          <button class="btn media-btn" data-key="swipe_up" data-swipe hidden>Mission Control</button>
-          <button class="btn media-btn" data-key="swipe_down" data-swipe hidden>App Windows</button>
-          <button class="btn media-btn" data-key="swipe_right" data-swipe hidden>Previous Space</button>
-          <button class="btn media-btn" data-key="swipe_left" data-swipe hidden>Next Space</button>
-          <button class="btn media-btn" data-key="reopen_tab" data-message="Reopened Tab (⌘⇧T)">
-            <span class="icon">↩️</span>
-            <span class="lbl">Undo Close Tab</span>
-          </button>
-          <button class="btn media-btn" data-key="next_tab" data-message="Next Tab">
-            <span class="icon">⇥</span>
-            <span class="lbl">Next Tab</span>
-          </button>
-          <button class="btn media-btn" data-key="refresh" data-message="Refreshed Page">
-            <span class="icon">🔄</span>
-            <span class="lbl">Refresh (⌘R)</span>
-          </button>
-          <button class="btn media-btn" data-key="cmd_left" data-message="Browser Back">
-            <span class="icon">⬅️</span>
-            <span class="lbl">Page Back</span>
-          </button>
-          <button class="btn media-btn" data-key="cmd_right" data-message="Browser Forward">
-            <span class="icon">➡️</span>
-            <span class="lbl">Page Fwd</span>
-          </button>
-          <button class="btn media-btn" data-key="c" data-message="Toggled Subtitles (C)">
-            <span class="icon">💬</span>
-            <span class="lbl">Captions (C)</span>
-          </button>
-          <button class="btn media-btn" data-key="j" data-message="Rewind 10s (J)">
-            <span class="icon">⏪</span>
-            <span class="lbl">-10s (J)</span>
-          </button>
-          <button class="btn media-btn" data-key="l" data-message="Fast Forward 10s (L)">
-            <span class="icon">⏩</span>
-            <span class="lbl">+10s (L)</span>
-          </button>
-          <button class="btn media-btn" data-key="fullscreen_mac" data-message="Mac App Fullscreen">
-            <span class="icon">🖥️</span>
-            <span class="lbl">Mac Fullscreen</span>
-          </button>
-          <button class="btn media-btn" data-key="bright_down">
-            <span class="icon">🔅</span>
-            <span class="lbl">Screen Dim</span>
-          </button>
-          <button class="btn media-btn" data-key="bright_up">
-            <span class="icon">🔆</span>
-            <span class="lbl">Screen Bright</span>
-          </button>
-          <button class="btn media-btn" data-click="left" data-count="2" data-message="Double Clicked">
-            <span class="icon">🖱️</span>
-            <span class="lbl">Double Click</span>
+          <button type="button" class="btn media-btn" data-key="swipe_up" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-grid"/></svg><span>Mission Control</span></button>
+          <button type="button" class="btn media-btn" data-key="swipe_down" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>App Windows</span></button>
+          <button type="button" class="btn media-btn" data-key="swipe_right" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Previous Space</span></button>
+          <button type="button" class="btn media-btn" data-key="swipe_left" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-forward"/></svg><span>Next Space</span></button>
+          <button type="button" class="btn media-btn" data-key="reopen_tab" data-message="Reopened Tab (⌘⇧T)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-restore"/></svg><span>Reopen Tab</span></button>
+          <button type="button" class="btn media-btn" data-key="next_tab" data-message="Next Tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-forward"/></svg><span>Next Tab</span></button>
+          <button type="button" class="btn media-btn" data-key="refresh" data-message="Refreshed Page"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-refresh"/></svg><span>Refresh</span></button>
+          <button type="button" class="btn media-btn" data-key="cmd_left" data-message="Browser Back"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Page Back</span></button>
+          <button type="button" class="btn media-btn" data-key="cmd_right" data-message="Browser Forward"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-forward"/></svg><span>Page Forward</span></button>
+          <button type="button" class="btn media-btn" data-key="c" data-message="Toggled Subtitles (C)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-captions"/></svg><span>Captions</span></button>
+          <button type="button" class="btn media-btn" data-key="j" data-message="Rewind 10s (J)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-rewind"/></svg><span>Rewind 10 sec</span></button>
+          <button type="button" class="btn media-btn" data-key="l" data-message="Fast Forward 10s (L)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fast-forward"/></svg><span>Forward 10 sec</span></button>
+          <button type="button" class="btn media-btn" data-key="fullscreen_mac" data-message="Mac App Fullscreen"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fullscreen"/></svg><span>Mac Fullscreen</span></button>
+          <button type="button" class="btn media-btn" data-key="bright_down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-brightness"/></svg><span>Screen Dim</span></button>
+          <button type="button" class="btn media-btn" data-key="bright_up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-brightness"/></svg><span>Screen Bright</span></button>
+          <button type="button" class="btn media-btn" data-click="left" data-count="2" data-message="Double clicked">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-left"/></svg><span>Double Click</span>
           </button>
         </div>
       </div>

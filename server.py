@@ -61,6 +61,8 @@ ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/remote.js": ("remote.js", "text/javascript; charset=utf-8"),
     "/remote.css": ("remote.css", "text/css; charset=utf-8"),
+    "/assets/logo.svg": ("assets/logo.svg", "image/svg+xml"),
+    "/assets/touch-icon.png": ("assets/touch-icon.png", "image/png"),
 }
 
 
@@ -477,7 +479,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
             "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         super().end_headers()
