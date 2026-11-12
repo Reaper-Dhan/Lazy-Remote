@@ -5,7 +5,31 @@ import AppKit
 // Disable stdout buffering
 setbuf(stdout, nil)
 
-var isDragging = false
+let mouseSource = CGEventSource(stateID: .privateState)
+var dragEventNumber: Int64?
+var nextMouseEventNumber: Int64 = 1
+
+func newMouseEventNumber() -> Int64 {
+    defer { nextMouseEventNumber += 1 }
+    return nextMouseEventNumber
+}
+
+func makeMouseEvent(
+    type: CGEventType,
+    button: CGMouseButton,
+    position: CGPoint,
+    number: Int64,
+    clickState: Int64
+) -> CGEvent? {
+    guard let event = CGEvent(
+        mouseEventSource: mouseSource, mouseType: type, mouseCursorPosition: position, mouseButton: button
+    ) else { return nil }
+    event.flags = []
+    event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
+    event.setIntegerValueField(.mouseEventNumber, value: number)
+    event.setIntegerValueField(.mouseEventClickState, value: clickState)
+    return event
+}
 
 func getMousePos() -> CGPoint {
     if let event = CGEvent(source: nil) {
@@ -22,50 +46,50 @@ func moveMouse(dx: Double, dy: Double) {
     CGWarpMouseCursorPosition(newPt)
     
     // 2. Post mouse moved / dragged event with delta values
-    let eventType: CGEventType = isDragging ? .leftMouseDragged : .mouseMoved
-    if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: eventType, mouseCursorPosition: newPt, mouseButton: .left) {
+    let eventType: CGEventType = dragEventNumber == nil ? .mouseMoved : .leftMouseDragged
+    if let moveEvent = makeMouseEvent(
+        type: eventType, button: .left, position: newPt,
+        number: dragEventNumber ?? 0, clickState: dragEventNumber == nil ? 0 : 1
+    ) {
         moveEvent.setIntegerValueField(.mouseEventDeltaX, value: Int64(dx))
         moveEvent.setIntegerValueField(.mouseEventDeltaY, value: Int64(dy))
         moveEvent.post(tap: .cghidEventTap)
     }
 }
 
-func clickMouse(button: String, count: Int = 1, continuation: Bool = false) {
+func clickMouse(button: String, count: Int = 1, continuation: Bool = false) -> Bool {
     let pos = getMousePos()
-    if button == "right" {
-        let down = CGEvent(mouseEventSource: nil, mouseType: .rightMouseDown, mouseCursorPosition: pos, mouseButton: .right)
-        let up = CGEvent(mouseEventSource: nil, mouseType: .rightMouseUp, mouseCursorPosition: pos, mouseButton: .right)
-        down?.post(tap: .cghidEventTap)
+    let secondary = button == "right"
+    let mouseButton: CGMouseButton = secondary ? .right : .left
+    for i in 1...count {
+        let clickState: Int64 = continuation ? 2 : Int64(i)
+        let number = newMouseEventNumber()
+        guard let down = makeMouseEvent(
+            type: secondary ? .rightMouseDown : .leftMouseDown,
+            button: mouseButton, position: pos, number: number, clickState: clickState
+        ), let up = makeMouseEvent(
+            type: secondary ? .rightMouseUp : .leftMouseUp,
+            button: mouseButton, position: pos, number: number, clickState: clickState
+        ) else { return false }
+        down.post(tap: .cghidEventTap)
         usleep(12000)
-        up?.post(tap: .cghidEventTap)
-    } else {
-        for i in 1...count {
-            let clickState = continuation ? 2 : Int64(i)
-            let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: pos, mouseButton: .left)
-            let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: pos, mouseButton: .left)
-            down?.setIntegerValueField(.mouseEventClickState, value: clickState)
-            up?.setIntegerValueField(.mouseEventClickState, value: clickState)
-            down?.post(tap: .cghidEventTap)
-            usleep(12000)
-            up?.post(tap: .cghidEventTap)
-            if i < count {
-                usleep(25000)
-            }
-        }
+        up.post(tap: .cghidEventTap)
+        if i < count { usleep(25000) }
     }
+    return true
 }
 
-func setDrag(active: Bool) {
-    guard active != isDragging else { return }
-    let pos = getMousePos()
-    isDragging = active
-    if active {
-        let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: pos, mouseButton: .left)
-        down?.post(tap: .cghidEventTap)
-    } else {
-        let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: pos, mouseButton: .left)
-        up?.post(tap: .cghidEventTap)
-    }
+@discardableResult
+func setDrag(active: Bool) -> Bool {
+    guard active != (dragEventNumber != nil) else { return true }
+    let number = dragEventNumber ?? newMouseEventNumber()
+    guard let event = makeMouseEvent(
+        type: active ? .leftMouseDown : .leftMouseUp, button: .left,
+        position: getMousePos(), number: number, clickState: 1
+    ) else { return false }
+    event.post(tap: .cghidEventTap)
+    dragEventNumber = active ? number : nil
+    return true
 }
 
 func scrollMouse(dx: Int32, dy: Int32) {
@@ -200,10 +224,16 @@ while let line = readLine() {
     case "click":
         let button = (json["button"] as? String) ?? "left"
         let count = (json["count"] as? NSNumber)?.intValue ?? 1
-        clickMouse(button: button, count: count, continuation: json["continuation"] as? Bool == true)
+        guard clickMouse(button: button, count: count, continuation: json["continuation"] as? Bool == true) else {
+            print("invalid")
+            continue
+        }
     case "drag":
         let active = (json["active"] as? Bool) ?? false
-        setDrag(active: active)
+        guard setDrag(active: active) else {
+            print("invalid")
+            continue
+        }
     case "scroll":
         let dx = Int32((json["dx"] as? NSNumber)?.intValue ?? 0)
         let dy = Int32((json["dy"] as? NSNumber)?.intValue ?? 0)
