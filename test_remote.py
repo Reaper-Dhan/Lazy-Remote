@@ -128,7 +128,9 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status", cookie=new_cookie)[0], 401)
 
     def test_phone_activity_controls_server_shutdown(self):
-        started = self.remote.last_phone_activity
+        # Step the recorded time back before each action: Windows' monotonic clock only
+        # ticks every ~15 ms, so two quick requests can otherwise share one reading.
+        started = self.remote.last_phone_activity = self.remote.last_phone_activity - 10
         pending = self.begin()
         self.assertEqual(self.request("/api/status", cookie=pending)[0], 401)
         self.assertEqual(self.remote.last_phone_activity, started)
@@ -136,8 +138,8 @@ class RemoteSecurityTests(unittest.TestCase):
         self.remote.decide(self.remote.snapshot()["match"], True)
         _, headers, _ = self.request("/api/claim", {}, cookie=pending)
         session = headers["Set-Cookie"].split(";", 1)[0]
-        claimed = self.remote.last_phone_activity
-        self.assertGreater(claimed, started)
+        self.assertGreater(self.remote.last_phone_activity, started)
+        claimed = self.remote.last_phone_activity = self.remote.last_phone_activity - 10
         self.assertEqual(self.request("/api/status", cookie=session)[0], 200)
         self.assertEqual(self.remote.last_phone_activity, claimed)
 
