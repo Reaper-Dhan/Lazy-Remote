@@ -400,7 +400,12 @@ class App:
             ttk.Button(row, text="Copy command", command=lambda: (
                 self.root.clipboard_clear(), self.root.clipboard_append(input_backends.LINUX_SETUP))).pack(side="left")
             ttk.Button(row, text="Check again", command=lambda: self.send("check_access")).pack(side="left", padx=8)
-            self.label(frame, "This gives only the person at this screen access to the device.", "Muted.TLabel")
+            self.label(frame, "This lets any app you run, not only Lazy Remote, create a virtual keyboard "
+                              "and mouse. Remove it when you stop using the remote:", "Muted.TLabel")
+            row = ttk.Frame(frame)
+            row.pack(anchor="w", pady=(2, 0))
+            ttk.Button(row, text="Copy undo command", command=lambda: (
+                self.root.clipboard_clear(), self.root.clipboard_append(input_backends.LINUX_UNDO))).pack(side="left")
         else:
             self.label(frame, "Nothing to do on Windows. The remote cannot control apps that run as "
                               "administrator.")

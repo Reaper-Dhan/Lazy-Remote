@@ -458,6 +458,11 @@ LINUX_SETUP = (
     "| sudo tee /etc/udev/rules.d/70-lazy-remote-uinput.rules && "
     "sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trigger"
 )
+# Removes the rule again. The device keeps its access until the next restart.
+LINUX_UNDO = (
+    "sudo rm /etc/udev/rules.d/70-lazy-remote-uinput.rules && "
+    "sudo udevadm control --reload-rules && sudo udevadm trigger"
+)
 
 
 def create():

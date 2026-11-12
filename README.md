@@ -39,6 +39,14 @@ sudo modprobe uinput && sudo udevadm control --reload-rules && sudo udevadm trig
 
 The `uaccess` tag gives the device only to the person signed in at the screen. Avoid adding your account to the `input` group instead: that also lets programs read every keyboard.
 
+This access isn’t limited to Lazy Remote: any app you run can then create a virtual keyboard and mouse, which Wayland normally prevents. Remove the rule when you stop using the remote:
+
+```bash
+sudo rm /etc/udev/rules.d/70-lazy-remote-uinput.rules && sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+For typing, Lazy Remote uses `xdotool` (X11) or `wtype` (Wayland, except GNOME) when they’re installed, so any keyboard layout and accented letters work. Without them it types through `/dev/uinput` with a US layout.
+
 ### Trust this computer on your phone
 
 Open **Set up phone** in Lazy Remote. On a Mac it sends the right file with AirDrop or the share menu. On Windows and Linux it opens the certificate folder. It also shows the steps and the certificate fingerprint.
