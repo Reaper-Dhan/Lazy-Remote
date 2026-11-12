@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" alt="" width="80" height="80">
+
 # Lazy Remote
 
 **A phone trackpad, keyboard, and media remote for your Mac.** Open it in a mobile browser, pair over your local network, and approve control from the Mac.

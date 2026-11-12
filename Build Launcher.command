@@ -5,7 +5,15 @@ project="$PWD"
 staging="$(mktemp -d "$project/.launcher-build.XXXXXX")"
 trap 'rm -rf -- "$staging"' EXIT
 app="$staging/Lazy Remote.app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+iconset="$staging/LazyRemote.iconset"
+mkdir "$iconset"
+for size in 16 32 128 256 512; do
+    retina=$((size * 2))
+    /usr/bin/sips -z "$size" "$size" assets/logo.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    /usr/bin/sips -z "$retina" "$retina" assets/logo.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+/usr/bin/iconutil -c icns "$iconset" -o "$app/Contents/Resources/LazyRemote.icns"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -14,6 +22,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>LazyRemote</string>
     <key>CFBundleIdentifier</key><string>local.couch-remote.launcher</string>
     <key>CFBundleName</key><string>Lazy Remote</string>
+    <key>CFBundleIconFile</key><string>LazyRemote.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>

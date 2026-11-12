@@ -215,11 +215,10 @@ private struct LauncherView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 12) {
-                Image(systemName: "rectangle.and.hand.point.up.left")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.indigo)
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .scaledToFit()
                     .frame(width: 44, height: 44)
-                    .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Lazy Remote").font(.title2.bold())
