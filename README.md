@@ -88,6 +88,8 @@ Use **Trackpad** for pointing and typing, **Media** for playback and volume, and
 
 iOS uses three-finger swipes for editing. If the page does not receive the gesture, use **Mac swipes** above the trackpad or tap the action under **Shortcuts**. If neither appears, enable the relevant gesture in the Mac’s **Trackpad** settings and the matching shortcut under **Keyboard → Keyboard Shortcuts → Mission Control**.
 
+On macOS 27, switching Spaces briefly opens Mission Control and selects the neighboring desktop on the display under the pointer. At the end of the row, Lazy Remote reports that there is no adjacent Space in that direction.
+
 **On Windows and Linux**, three-finger swipes are off and Mac shortcuts become their usual equivalents: Cmd becomes Ctrl, browser Back and Forward use Alt+arrow, and fullscreen uses F11. The phone hides brightness buttons on Windows. On Linux, the US layout and limited character support apply when the app falls back to `/dev/uinput` for typing.
 
 ## Security
@@ -95,7 +97,7 @@ iOS uses three-finger swipes for editing. If the page does not receive the gestu
 - The server listens on one private IPv4 address. Use Lazy Remote on a network you trust and keep its port off the public internet.
 - Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the computer.
 - **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the computer.
-- Approval applies to a single open tab. By default, hiding the remote page locks it. The server also locks it after **15 seconds** without a check-in if it misses the browser's lock request. Enable **Keep phone access when switching apps** before starting the server if you want the same tab to resume without approval.
+- Approval applies to a single open tab. By default, hiding the remote page locks it. The server also locks it after **15 seconds** without a check-in if it misses the browser's lock request. Enable **Keep phone access when switching apps** before starting the server if you want the same tab to resume without approval. After a reload, a remembered browser can request fresh approval right away.
 - The session still locks after **5 minutes** without control input. The server stops after **30 minutes** without an approved connection or successful control command. Enable **Keep running when the phone is idle** to skip the server stop. Use **Lock phone** in the desktop app to end the session and keep your remembered browser.
 - An active session can type and click in the focused app. Treat the approved phone as a keyboard and trackpad with access to your computer.
 - The computer generates its own HTTPS identity. It discards the root signing key and retains a restricted intermediate key in private application storage. The intermediate permits HTTPS certificates for `.local` names, private IPv4 addresses, and loopback. The phone folder contains only the public profile and certificate.
