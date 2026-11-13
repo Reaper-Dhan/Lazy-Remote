@@ -6,15 +6,13 @@ import struct
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import unittest
-import urllib.error
-import urllib.request
+from unittest.mock import patch
 
 import input_backends
 from input_backends import KEYMAP, InputBackend, LinuxInput, WindowsInput
-from server import KEYS, SWIPE_SHORTCUTS, CertificateShare, LocalInput
+from server import KEYS, SWIPE_SHORTCUTS, LocalInput
 from auth import RequestError
 import tls_setup
 
@@ -107,6 +105,19 @@ class WindowsKeyTests(unittest.TestCase):
         # Windows has no standard brightness key, so those two buttons do nothing.
         self.assertEqual(names - set(WindowsInput.VK), {"bright_up", "bright_down"})
 
+    def test_rejected_windows_input_does_not_mark_drag_active(self):
+        class RejectingWindows(WindowsInput):
+            def __init__(self):
+                InputBackend.__init__(self)
+
+            def _mouse(self, *args):
+                raise OSError("Windows refused the input.")
+
+        backend = RejectingWindows()
+        with self.assertRaises(RequestError):
+            LocalInput(backend).send({"action": "drag", "active": True})
+        self.assertFalse(backend.dragging)
+
 
 class FakeUinput:
     def __init__(self):
@@ -130,12 +141,12 @@ class LinuxTests(unittest.TestCase):
     def setUp(self):
         self.device = FakeUinput()
         self.locked = False
-        self.backend = LinuxInput(opener=lambda: self.device.write_fd, ioctl=self.device.ioctl,
+        self.backend = LinuxInput(opener=lambda: os.dup(self.device.write_fd), ioctl=self.device.ioctl,
                                   locked=lambda: self.locked, typer=[])
         self.backend.ready()
 
     def events(self):
-        self.backend.fd = None  # The fake device closes its own pipe.
+        self.backend.close(release=False)
         return [event for event in self.device.events() if event[0] != LinuxInput.EV_SYN]
 
     def test_creates_one_virtual_device(self):
@@ -167,20 +178,30 @@ class LinuxTests(unittest.TestCase):
             (key, shift, 1), (key, one, 1), (key, one, 0), (key, shift, 0),
         ])
 
-    def test_typing_tool_handles_any_layout_and_falls_back_when_it_fails(self):
-        script = Path(tempfile.mkdtemp()) / "typer.py"
-        log = script.with_suffix(".log")
-        script.write_text("import sys\nassert sys.argv[3] == '--'\n"
-                          "open(sys.argv[1], 'a', encoding='utf-8').write(sys.argv[4])\n"
-                          "sys.exit(int(sys.argv[2]))\n", encoding="utf-8")
-        self.backend.typer = [sys.executable, str(script), str(log), "0"]
-        self.backend.text("héllo -n")
-        self.assertEqual(log.read_text(encoding="utf-8"), "héllo -n")  # passed after "--", never as an option
-        self.backend.typer = [sys.executable, str(script), str(log), "1"]
-        self.backend.text("a")
-        self.assertIsNone(self.backend.typer)  # a failing tool is not retried
-        key, a = LinuxInput.EV_KEY, LinuxInput.KEY["a"]
-        self.assertEqual(self.events(), [(key, a, 1), (key, a, 0)])  # only the fallback used uinput
+    def test_typing_tool_reads_stdin_and_does_not_replay_after_a_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / "typer.py"
+            log = script.with_suffix(".log")
+            script.write_text("import sys\n"
+                              "with open(sys.argv[1], 'ab') as output: output.write(sys.stdin.buffer.read())\n"
+                              "sys.exit(int(sys.argv[2]))\n", encoding="utf-8")
+            self.backend.typer = [sys.executable, str(script), str(log), "0"]
+            self.backend.text("héllo -n")
+            self.assertEqual(log.read_text(encoding="utf-8"), "héllo -n")
+            self.backend.typer = [sys.executable, str(script), str(log), "1"]
+            with self.assertRaises(OSError):
+                self.backend.text("a")
+            self.assertEqual(log.read_text(encoding="utf-8"), "héllo -na")
+            self.assertEqual(self.events(), [])
+
+    def test_lock_destroys_device_and_clears_a_held_button(self):
+        self.backend.send({"action": "drag", "active": True})
+        self.locked = True
+        self.assertFalse(self.backend.send({"action": "check_perm"}))
+        self.assertIsNone(self.backend.fd)
+        self.assertFalse(self.backend.dragging)
+        self.assertEqual(self.device.calls[-1][0], LinuxInput.UI_DEV_DESTROY)
+        self.assertEqual(self.events(), [(LinuxInput.EV_KEY, LinuxInput.BTN["left"], 1)])
 
     def test_wheel_sends_hi_res_and_whole_notches(self):
         self.backend.wheel(90, 0)
@@ -194,40 +215,44 @@ class LinuxTests(unittest.TestCase):
 
 
 class LockCheckTests(unittest.TestCase):
-    def check(self, answers):
-        calls = []
-
+    def check(self, answers, desktop="GNOME"):
         def run(command):
-            calls.append(command[0])
             stdout, code = answers[command[0]]
             return subprocess.CompletedProcess(command, code, stdout=stdout, stderr="")
-        return input_backends._LockCheck(run)(), calls
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": desktop}):
+            return input_backends._LockCheck(run)()
 
-    def test_logind_lock_hint(self):
-        self.assertEqual(self.check({"loginctl": ("yes\n", 0)}), (True, ["loginctl"]))
+    def test_requires_active_and_unlocked(self):
+        for output, code in (("Active=yes\nLockedHint=yes", 0), ("Active=no\nLockedHint=no", 0),
+                             ("Active=yes", 0), ("", 1)):
+            with self.subTest(output=output, code=code):
+                self.assertTrue(self.check({"loginctl": (output, code)}))
+        self.assertFalse(self.check({"loginctl": ("Active=yes\nLockedHint=no", 0)}))
 
     @unittest.skipUnless(hasattr(os, "getuid"), "POSIX only")
-    def test_screen_locker_without_logind(self):
-        # Sway, i3 and Hyprland leave LockedHint unset, so a running locker counts.
-        self.assertTrue(self.check({"loginctl": ("", 1), "pgrep": ("1234\n", 0)})[0])
-        self.assertFalse(self.check({"loginctl": ("no\n", 0), "pgrep": ("", 1)})[0])
+    def test_unknown_screen_state_is_blocked(self):
+        answers = {"loginctl": ("Active=yes\nLockedHint=no", 0), "pgrep": ("", 1), "gdbus": ("", 1)}
+        self.assertTrue(self.check(answers, "sway"))
+        self.assertFalse(self.check({**answers, "gdbus": ("(false,)", 0)}, "sway"))
+        self.assertTrue(self.check({**answers, "pgrep": ("1234", 0)}, "sway"))
 
 
 class CertificateTests(unittest.TestCase):
     @unittest.skipIf(shutil.which("openssl") is None, "openssl is not installed")
-    def test_root_only_vouches_for_local_names(self):
+    def test_restricted_intermediate_and_public_phone_files(self):
         # Covers whichever backend this Python uses (cryptography or the openssl binary).
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             tls_setup.make_identity(directory, ["10.1.2.3", "pc.local", "127.0.0.1"])
-            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "root.pem"],
+            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "issuer.pem"],
                                   cwd=directory, capture_output=True, text=True).stdout
-            self.assertIn("Name Constraints:", root)
+            self.assertIn("Name Constraints: critical", root)
             self.assertIn("DNS:local", root)
-            self.assertNotIn("Name Constraints: critical", root)  # phones that lack support still connect
-            self.assertNotIn("IP:", root.split("Name Constraints:", 1)[1].split("X509v3", 1)[0])
+            self.assertIn("IP:192.168.0.0/255.255.0.0", root)
+            self.assertFalse((directory / "root.key").exists())
+            self.assertEqual({p.suffix for p in (directory / "phone").iterdir()}, {".cer", ".mobileconfig"})
             verify = subprocess.run(
-                ["openssl", "verify", "-CAfile", "root.pem", "-purpose", "sslserver", "server.pem"],
+                ["openssl", "verify", "-CAfile", "root.pem", "-untrusted", "issuer.pem", "-purpose", "sslserver", "server.pem"],
                 cwd=directory, capture_output=True, text=True,
             )
             self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
@@ -256,7 +281,7 @@ class CertificateTests(unittest.TestCase):
             directory = Path(temporary)
             tls_setup.make_identity(directory, ["192.168.1.2", "pc.local", "127.0.0.1"])
             result = subprocess.run(
-                ["openssl", "verify", "-CAfile", "root.pem", "-purpose", "sslserver", "server.pem"],
+                ["openssl", "verify", "-CAfile", "root.pem", "-untrusted", "issuer.pem", "-purpose", "sslserver", "server.pem"],
                 cwd=directory, capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -264,7 +289,7 @@ class CertificateTests(unittest.TestCase):
                                   cwd=directory, capture_output=True, text=True).stdout
             self.assertIn("IP Address:192.168.1.2", text)
             self.assertIn("DNS:pc.local", text)
-            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "root.pem"],
+            root = subprocess.run(["openssl", "x509", "-noout", "-text", "-in", "issuer.pem"],
                                   cwd=directory, capture_output=True, text=True).stdout
             self.assertIn("DNS:local", root)
             expected = subprocess.run(
@@ -273,57 +298,6 @@ class CertificateTests(unittest.TestCase):
             ).stdout.strip().split("=", 1)[1]
             self.assertEqual(tls_setup.fingerprint(directory / "root.pem"), expected)
             self.assertFalse(tls_setup.certificate_expired(directory / "server.pem"))
-
-
-class CertificateShareTests(unittest.TestCase):
-    def setUp(self):
-        self.directory = Path(tempfile.mkdtemp())
-        tls_setup.make_identity(self.directory, ["127.0.0.1"])
-        self.events = []
-        self.ended = threading.Event()
-
-        def record(event, **data):
-            self.events.append((event, data))
-            if event == "certificate_share_ended":
-                self.ended.set()
-        self.share = CertificateShare("127.0.0.1", self.directory, "AA:BB", on_change=record)
-        self.addCleanup(self.share.stop)
-
-    def get(self, url):
-        try:
-            with urllib.request.urlopen(url, timeout=5) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as error:
-            error.close()
-            return error.code, b""
-
-    def test_offers_public_files_only_under_its_secret_link_and_ends_after_two_downloads(self):
-        url = self.share.start()
-        self.assertEqual(self.events[0][0], "certificate_share")
-        self.assertEqual(self.events[0][1]["url"], url)
-        base = url.rsplit("/", 2)[0]
-        self.assertEqual(self.get(base + "/")[0], 404)
-        self.assertEqual(self.get(base + "/wrong-token/Lazy-Remote-Root.cer")[0], 404)
-        self.assertEqual(self.get(url + "server.key")[0], 404)
-        self.assertEqual(self.get(url + "../server.key")[0], 404)
-        status, page = self.get(url)
-        self.assertEqual(status, 200)
-        self.assertIn(b"AA:BB", page)
-        self.assertEqual(self.get(url + "Lazy-Remote.mobileconfig"),
-                         (200, (self.directory / "Lazy Remote.mobileconfig").read_bytes()))
-        self.assertEqual(self.get(url + "Lazy-Remote-Root.cer"),
-                         (200, (self.directory / "Lazy Remote Root.cer").read_bytes()))
-        self.assertTrue(self.ended.wait(5))
-        with self.assertRaises(OSError):
-            urllib.request.urlopen(url, timeout=2)
-
-    def test_stop_ends_the_share(self):
-        url = self.share.start()
-        self.share.stop()
-        self.assertTrue(self.ended.wait(5))
-        time.sleep(0.7)  # let the serving thread notice and close its socket
-        with self.assertRaises(OSError):
-            urllib.request.urlopen(url, timeout=2)
 
 
 class FactoryTests(unittest.TestCase):

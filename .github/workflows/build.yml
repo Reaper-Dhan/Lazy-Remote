@@ -63,22 +63,20 @@ jobs:
         run: |
           python -m pip install -r packaging/requirements.txt
           python packaging/build_desktop.py
-      - name: Start the packed Windows app once
+      - name: Verify HTTPS and pairing in the packed Windows app
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mkdir smoke && cd smoke && unzip -q ../dist/Lazy-Remote-Windows.zip
-          "./Lazy Remote/Lazy Remote.exe" --server --help | tee help.txt
-          grep -q "keep-running" help.txt
+          unzip -q dist/Lazy-Remote-Windows.zip -d smoke
+          python .github/smoke_package.py "smoke/Lazy Remote/Lazy Remote.exe" --server
       - if: runner.os == 'macOS'
         run: ./"Build Launcher.command"
-      - name: Start the packed Mac server once
+      - name: Verify HTTPS and pairing in the packed Mac app
         if: runner.os == 'macOS'
         run: |
           mkdir smoke && ditto -x -k dist/Lazy-Remote-macOS.zip smoke
           server="smoke/Lazy Remote.app/Contents/Resources"
-          "$server/python/bin/python3" -B "$server/server/server.py" --help | tee help.txt
-          grep -q "keep-running" help.txt
+          python3 .github/smoke_package.py "$server/python/bin/python3" -E -s -B -u "$server/server/server.py"
           codesign --verify --deep --strict "smoke/Lazy Remote.app"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -94,7 +92,7 @@ jobs:
     container: almalinux:9@sha256:245f8aab832fe800aa42bdab5fad75ebbd8e0b4c9f24820a83c638b177857ae2
     steps:
       - name: Install Python 3.12 with Tk
-        run: dnf install -y --setopt=install_weak_deps=False python3.12 python3.12-pip python3.12-tkinter binutils tar gzip
+        run: dnf install -y --setopt=install_weak_deps=False python3.12 python3.12-pip python3.12-tkinter binutils tar gzip util-linux
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -105,11 +103,10 @@ jobs:
           python3.12 -m venv /opt/build
           /opt/build/bin/python -m pip install -r packaging/requirements.txt
           /opt/build/bin/python packaging/build_desktop.py
-      - name: Start the packed Linux app once
+      - name: Verify HTTPS and pairing in the packed Linux app
         run: |
           mkdir smoke && tar -xzf dist/Lazy-Remote-Linux-*.tar.gz -C smoke
-          smoke/lazy-remote/lazy-remote --server --help | tee help.txt
-          grep -q "keep-running" help.txt
+          runuser -u nobody -- python3.12 .github/smoke_package.py smoke/lazy-remote/lazy-remote --server
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Lazy-Remote-Linux

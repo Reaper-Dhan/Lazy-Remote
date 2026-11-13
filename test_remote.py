@@ -12,7 +12,7 @@ import unittest
 
 from server import (
     APPROVAL_COOKIE, COOKIE, DEVICE_COOKIE, IDLE_LIFETIME, SERVER_IDLE_MESSAGE,
-    SERVER_IDLE_TIMEOUT, Remote, RemoteServer, three_finger_shortcuts,
+    SERVER_IDLE_TIMEOUT, PRESENCE_LIFETIME, TAB_HEADER, Remote, RemoteServer, mac_swipe_shortcuts,
 )
 from tls_setup import tls_identity
 
@@ -38,6 +38,7 @@ class RemoteSecurityTests(unittest.TestCase):
 
     def setUp(self):
         self.bridge = RecordingBridge()
+        self.tabs = {}
         self.server = RemoteServer(("127.0.0.1", 0))
         self.server.configure_tls(self.context, ["127.0.0.1"])
         storage = tempfile.TemporaryDirectory()
@@ -61,6 +62,8 @@ class RemoteSecurityTests(unittest.TestCase):
         request_headers = {"Origin": self.origin, "Content-Type": "application/json"}
         if cookie:
             request_headers["Cookie"] = cookie
+            if cookie in self.tabs:
+                request_headers[TAB_HEADER] = self.tabs[cookie]
         request_headers.update(headers or {})
         try:
             if body is None:
@@ -68,7 +71,10 @@ class RemoteSecurityTests(unittest.TestCase):
             else:
                 connection.request("POST", path, json.dumps(body), request_headers)
             response = connection.getresponse()
-            return response.status, response.headers, response.read()
+            result = response.read()
+            if path == "/api/claim" and response.status == 200:
+                self.tabs[response.headers["Set-Cookie"].split(";", 1)[0]] = json.loads(result)["tab"]
+            return response.status, response.headers, result
         finally:
             connection.close()
 
@@ -169,6 +175,52 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "space"}, cookie=cookie)[0], 401)
         self.assertIsNotNone(self.remote.snapshot()["code"])  # still serving, with a fresh QR code
 
+    def test_session_cookie_needs_the_approved_tab_and_foreground_lease(self):
+        cookie = self.pair().split(";", 1)[0]
+        tab = self.tabs.pop(cookie)
+        self.assertEqual(self.request("/api/status", cookie=cookie)[0], 401)
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "space"}, cookie=cookie)[0], 401)
+        self.tabs[cookie] = tab
+        self.assertEqual(self.request("/api/status", cookie=cookie)[0], 200)
+        self.remote.last_presence -= PRESENCE_LIFETIME
+        self.assertEqual(self.request("/api/status", cookie=cookie)[0], 401)
+
+    def test_background_opt_out_keeps_tab_approved(self):
+        self.remote.protect_background = False
+        cookie = self.pair().split(";", 1)[0]
+        self.remote.last_presence -= PRESENCE_LIFETIME
+        status, _, body = self.request("/api/status", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertFalse(json.loads(body)["protect_background"])
+
+    def test_revoke_does_not_wait_for_native_input(self):
+        cookie = self.pair().split(";", 1)[0]
+        started = threading.Event()
+        finish = threading.Event()
+
+        def slow_input(command):
+            self.bridge.commands.append(command)
+            if command == {"action": "drag", "active": True}:
+                started.set()
+                finish.wait(5)
+            return True
+
+        self.bridge.send = slow_input
+        results = []
+        thread = threading.Thread(target=lambda: results.append(self.request(
+            "/api/cmd", {"action": "drag", "active": True}, cookie=cookie
+        )[0]))
+        thread.start()
+        try:
+            self.assertTrue(started.wait(2))
+            self.assertEqual(self.request("/api/disconnect", {}, cookie=cookie)[0], 200)
+            self.assertTrue(thread.is_alive())
+        finally:
+            finish.set()
+            thread.join(5)
+        self.assertEqual(results, [401])
+        self.assertEqual(self.bridge.commands[-1], {"action": "drag", "active": False})
+
     def test_pairing_expiry_and_attempt_limit(self):
         self.remote.pairing.until = time.monotonic() - 1
         self.assertEqual(self.request("/api/pair", {"code": self.code})[0], 409)
@@ -202,8 +254,7 @@ class RemoteSecurityTests(unittest.TestCase):
 
     def test_motion_keeps_the_latest_sample_without_replaying_older_samples(self):
         cookie = self.pair().split(";", 1)[0]
-        stream = "1" * 32
-        packet = {"action": "motion", "stream": stream, "seq": 2, "dx": 10.5, "dy": -3}
+        packet = {"action": "motion", "seq": 2, "dx": 10.5, "dy": -3}
         self.assertEqual(self.request("/api/cmd", packet)[0], 401)
         self.assertEqual(self.request("/api/cmd", packet, cookie=cookie)[0], 200)
         last_activity = self.remote.last_phone_activity
@@ -217,34 +268,38 @@ class RemoteSecurityTests(unittest.TestCase):
         ])
         self.assertEqual(self.request("/api/cmd", dict(packet, seq=4, dx=float("inf")), cookie=cookie)[0], 400)
         self.assertEqual(self.request("/api/disconnect", {}, cookie=cookie)[0], 200)
-        self.assertFalse(self.remote.motion_streams)
+        self.assertEqual(self.remote.motion, (0, 0, 0))
 
-    def test_three_finger_swipes_follow_enabled_mac_shortcuts(self):
+    def test_swipes_follow_enabled_mac_shortcuts_and_finger_counts(self):
         trackpad = {
             "TrackpadThreeFingerHorizSwipeGesture": 2,
             "TrackpadThreeFingerVertSwipeGesture": 2,
+            "TrackpadFourFingerHorizSwipeGesture": 2,
         }
         hotkeys = {
             "32": {"enabled": False},
             "33": {"enabled": True, "value": {"type": "standard", "parameters": [65535, 12, 1 << 20]}},
         }
-        shortcuts = three_finger_shortcuts(trackpad, hotkeys)
+        shortcuts, fingers = mac_swipe_shortcuts(trackpad, hotkeys)
         self.assertEqual(shortcuts["swipe_left"], {"key_code": 124, "flags": 1 << 18})
         self.assertEqual(shortcuts["swipe_right"], {"key_code": 123, "flags": 1 << 18})
         self.assertNotIn("swipe_up", shortcuts)
         self.assertEqual(shortcuts["swipe_down"], {"key_code": 12, "flags": 1 << 20})
-        self.assertEqual(three_finger_shortcuts(dict(trackpad, TrackpadThreeFingerDrag=1), hotkeys), {})
-        self.remote.gestures = {**self.remote.gestures, "swipes": shortcuts}
+        self.assertEqual(fingers, {"swipe_left": [3, 4], "swipe_right": [3, 4], "swipe_down": [3]})
+        _, drag_fingers = mac_swipe_shortcuts(dict(trackpad, TrackpadThreeFingerDrag=1), hotkeys)
+        self.assertEqual(drag_fingers, {"swipe_left": [4], "swipe_right": [4]})
+        self.remote.gestures = {**self.remote.gestures, "swipes": shortcuts, "swipe_fingers": fingers}
         cookie = self.pair().split(";", 1)[0]
         _, _, body = self.request("/api/status", cookie=cookie)
         self.assertEqual(set(json.loads(body)["gestures"]["swipes"]), set(shortcuts))
+        self.assertEqual(json.loads(body)["gestures"]["swipe_fingers"], fingers)
         self.bridge.commands.clear()
         self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "swipe_up"}, cookie=cookie)[0], 400)
         self.assertEqual(self.request("/api/cmd", {
             "action": "shortcut", "key_code": 12, "flags": 1 << 20,
         }, cookie=cookie)[0], 400)
         self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "swipe_down"}, cookie=cookie)[0], 200)
-        self.assertEqual(self.bridge.commands, [{"action": "shortcut", "key_code": 12, "flags": 1 << 20}])
+        self.assertEqual(self.bridge.commands, [{"action": "shortcut", "name": "swipe_down", "key_code": 12, "flags": 1 << 20}])
 
     def test_drag_releases_when_expired_or_revoked(self):
         cookie = self.pair().split(";", 1)[0]
@@ -252,7 +307,9 @@ class RemoteSecurityTests(unittest.TestCase):
         release = {"action": "drag", "active": False}
         self.assertEqual(self.request("/api/cmd", hold, cookie=cookie)[0], 200)
         with self.remote.lock:
+            self.remote.last_presence = self.remote.drag_until - 1
             self.remote.expire(self.remote.drag_until)
+        self.remote.flush_drag_release()
         self.assertEqual(self.bridge.commands, [hold, release])
         self.assertEqual(self.request("/api/cmd", hold, cookie=cookie)[0], 200)
         self.remote.new_code()
@@ -345,11 +402,14 @@ class RemoteSecurityTests(unittest.TestCase):
             if os.name != "nt":  # Windows has no POSIX file modes.
                 self.assertEqual(stat.S_IMODE(state.stat().st_mode), 0o700)
                 self.assertEqual(stat.S_IMODE((path / "server.key").stat().st_mode), 0o600)
-            profile = plistlib.loads((path / "Lazy Remote.mobileconfig").read_bytes())
+            phone = path / "phone"
+            profile = plistlib.loads((phone / "Lazy Remote.mobileconfig").read_bytes())
             self.assertEqual(profile["PayloadContent"][0]["PayloadContent"],
-                             (path / "Lazy Remote Root.cer").read_bytes())
+                             (phone / "Lazy Remote Root.cer").read_bytes())
             self.assertEqual(tls_identity("192.168.1.3", "couch.local", False, state)[2:],
-                             (["couch.local"], fingerprint))
+                             (["192.168.1.3", "couch.local"], fingerprint))
+            self.assertEqual(tls_identity("192.168.1.4", None, False, state)[2:],
+                             (["192.168.1.4"], fingerprint))
             previous = path.resolve()
             self.assertNotEqual(tls_identity("192.168.1.3", "couch.local", True, state)[3], fingerprint)
             self.assertFalse(previous.exists())
