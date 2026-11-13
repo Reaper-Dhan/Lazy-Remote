@@ -4,7 +4,7 @@
 
 **A phone trackpad, keyboard, and media remote for your computer.** Open it in a mobile browser, pair over your local network, and approve control on the computer.
 
-[Quick start](#quick-start) · [Controls](#controls) · [Security](#security) · [Troubleshooting](#troubleshooting) · [Development](#development)
+[Quick start](#quick-start) · [Install on your phone](#install-on-your-phone) · [Controls](#controls) · [Security](#security) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 | Host | Controller | Connection |
 | --- | --- | --- |
@@ -22,11 +22,11 @@ You only need the app. No repo, no Terminal. Get it from the [Releases page](htt
 
 The apps aren’t signed by Apple or Microsoft, so the system warns once. Each release includes `SHA256SUMS.txt`; check your download against it before you open the app (`shasum -a 256 -c SHA256SUMS.txt --ignore-missing`, or `Get-FileHash` in PowerShell). Ignore the **Source code** files that GitHub adds to every release. To prove a file was built by this project’s workflow, run `gh attestation verify <file> --repo Reaper-Dhan/Lazy-Remote`.
 
-Click **Start server**. The **Setup guide** opens on first launch and walks you through the rest: input access, trusting this computer on your phone, and pairing.
+Click **Set up phone** to start the server, set up input access, and pair your phone.
 
 While the server runs, closing the window keeps the remote going: on a Mac, Lazy Remote stays in the menu bar; on Windows and Linux, it asks whether to minimize. When a phone asks for control, the window comes back so you can approve it.
 
-Everything ships inside the app. The Mac app uses the Python 3 built into macOS. If the Command Line Tools aren’t installed, it uses Homebrew’s Python, or asks you to run `xcode-select --install`. The Windows and Linux apps include their own Python.
+Current Mac, Windows, and Linux builds include Python. You don’t need to install it separately or install Xcode Command Line Tools to run the app. Older Mac releases may still require an installed Python.
 
 Connect your computer and phone to the same private Wi-Fi network.
 
@@ -51,56 +51,69 @@ For typing, Lazy Remote uses `xdotool` (X11) or `wtype` (Wayland, except GNOME) 
 
 ### Trust this computer on your phone
 
-Open **Set up phone** in Lazy Remote. On a Mac it sends the right file with AirDrop or the share menu. On every system it can also **send it over Wi-Fi with a QR code**: scan the code with the phone camera and download the file. It also shows the steps and the certificate fingerprint.
-
-The Wi-Fi link is plain HTTP, because the phone can’t use HTTPS before it trusts the computer. Someone else on the same network could swap the file, so compare the fingerprint on the phone with the one in Lazy Remote before you install it. The link uses a random address and stops after 2 minutes or two downloads.
+Open **Set up phone** in Lazy Remote. On a Mac, use the share menu to AirDrop the file to your own phone. On Windows and Linux, open the certificate folder and transfer the file to your phone over USB or through a file transfer you trust. The guide shows the SHA-256 fingerprint of the certificate. After installing it, scan the separate pairing QR code to open the remote over HTTPS.
 
 | Phone | File | Where to install it |
 | --- | --- | --- |
 | iPhone or iPad | `Lazy Remote.mobileconfig` | Open **Settings → Profile Downloaded** after transferring the profile. Then enable **Lazy Remote Local Root** in **Settings → General → About → Certificate Trust Settings**. [Apple’s setup guide](https://support.apple.com/en-us/102390) |
 | Android | `Lazy Remote Root.cer` | Install it as a **CA certificate** in your phone’s credential settings. The menu varies by device. |
 
-If you upgraded from Couch Remote, Lazy Remote reuses your existing certificate and remembered browser. The certificate files may still have the old name.
+If you already installed an earlier Lazy Remote profile, replace it once when upgrading to the new certificate format. Remove the old profile from your phone after installing the new one.
+
+## Install on your phone
+
+1. Start Lazy Remote on the computer. Install its trust profile or certificate on the phone and open the HTTPS address shown in the launcher.
+2. **iPhone or iPad:** In Safari, tap **Share → Add to Home Screen**. Turn on **Open as Web App** if it appears, then tap **Add**. [Apple’s installation guide](https://support.apple.com/en-az/guide/iphone/iphea86e5236/26/ios/26)
+3. **Android:** Tap **Install** in Lazy Remote, or choose **Install app** or **Add to Home screen** in your browser’s menu.
+4. Open the new icon. Tap **Scan pairing QR**, point the camera at the QR in the desktop launcher, and tap **Request access**. Approve the matching request on the computer. You can also enter the pairing code manually. Camera frames and QR photos are decoded on the phone.
+
+The app uses the address you installed it from. If the numeric address changes, install from the new address. If the Mac’s `.local` address works on your network, you can install from that address instead. The computer must be running Lazy Remote for the controls to work.
+
+If an older iPhone shortcut shows a letter instead of the Lazy Remote logo, remove that Home Screen icon and add the app again from Safari while the updated server is running.
 
 ## Controls
+
+Use **Trackpad** for pointing and typing, **Media** for playback and volume, and **Shortcuts** for browser and system actions.
 
 | Input | What it does |
 | --- | --- |
 | One finger | Moves the pointer. Tap for a left click or tap twice for a double-click. |
 | Two fingers | Scrolls using the Mac’s direction settings. Tap with both fingers on the main pad to right-click. |
 | Pinch | Sends zoom shortcuts to supported apps when pinch zoom is enabled. |
-| Three-finger swipe | Swipe left or right to switch Spaces, up for Mission Control, and down for App Exposé. Enable the matching gestures in **Trackpad** settings and shortcuts under **Keyboard → Keyboard Shortcuts → Mission Control**. The same actions appear under **More**. |
+| Three- or four-finger swipe | Swipe left or right to switch Spaces, up for Mission Control, and down for App Exposé. The phone follows the Mac’s enabled finger counts and keyboard shortcuts. The same actions appear under **Shortcuts**. |
+| **Mac swipes** | Turn this on above the trackpad and swipe with one finger. Tap **Mac swipes** again to return one finger to pointer control. Two-finger scroll and right-click still work. |
 | Three-finger drag or **Hold** | Drags items. The Mac’s **Three Finger Drag** setting takes priority over three-finger swipes. |
 | **Speed** | Adjusts pointer movement and scrolling. |
 | Keyboard and media buttons | Type into the focused app, control playback, and run common browser shortcuts. |
 
-Safari may intercept three-finger swipes for iOS editing. Turn on **More → Two-finger Mac swipes** to use two fingers for those shortcuts, or use the individual shortcut buttons. In that mode, two-finger tap still right-clicks and the **Scroll** strip handles scrolling.
+iOS uses three-finger swipes for editing. If the page does not receive the gesture, use **Mac swipes** above the trackpad or tap the action under **Shortcuts**. If neither appears, enable the relevant gesture in the Mac’s **Trackpad** settings and the matching shortcut under **Keyboard → Keyboard Shortcuts → Mission Control**.
 
-**On Windows and Linux**, three-finger swipes are off and Mac shortcuts become their usual equivalents: Cmd becomes Ctrl, browser Back and Forward use Alt+arrow, and fullscreen uses F11. Brightness buttons do nothing on Windows. On Linux, typing uses a US keyboard layout and skips characters outside it, such as accented letters.
+**On Windows and Linux**, three-finger swipes are off and Mac shortcuts become their usual equivalents: Cmd becomes Ctrl, browser Back and Forward use Alt+arrow, and fullscreen uses F11. The phone hides brightness buttons on Windows. On Linux, the US layout and limited character support apply when the app falls back to `/dev/uinput` for typing.
 
 ## Security
 
 - The server listens on one private IPv4 address. Use Lazy Remote on a network you trust and keep its port off the public internet.
-- Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the Mac.
-- **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the Mac.
-- Checking notifications or switching tabs pauses input. The session locks after **5 minutes** without control input, and the server shuts down after **30 minutes** without an approved connection or successful control command. Turn on **Keep running when the phone is idle** in the launcher to skip the 30-minute stop; the 5-minute lock still applies. Use **Lock remote** or **Stop server** to end access immediately.
-- An active session can type and click in the current Mac app. Treat the approved phone as a keyboard and trackpad with access to your Mac.
-- The computer generates its own HTTPS identity. Share only the public profile or certificate shown in the launcher. The root signing key is discarded after generation, and the root may only vouch for `.local` names, so it can’t be used to impersonate a real website. The server key stays in the user’s private application data (`~/Library/Application Support/Lazy Remote`, `%LOCALAPPDATA%\Lazy Remote`, or `~/.local/share/lazy-remote`), which is limited to your account on every system.
-- **Upgrading from an earlier version** creates a new certificate once, to add the `.local` limit. Install the new profile or certificate on your phone and remove the old one.
-- On Windows, the remote can’t control apps running as administrator. On Linux, the virtual input device could reach the lock screen, so Lazy Remote sends nothing while the desktop session is locked.
+- Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the computer.
+- **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the computer.
+- Approval applies to a single open tab. By default, hiding the remote page locks it. The server also locks it after **15 seconds** without a check-in if it misses the browser's lock request. Enable **Keep phone access when switching apps** before starting the server if you want the same tab to resume without approval.
+- The session still locks after **5 minutes** without control input. The server stops after **30 minutes** without an approved connection or successful control command. Enable **Keep running when the phone is idle** to skip the server stop. Use **Lock phone** in the desktop app to end the session and keep your remembered browser.
+- An active session can type and click in the focused app. Treat the approved phone as a keyboard and trackpad with access to your computer.
+- The computer generates its own HTTPS identity. It discards the root signing key and retains a restricted intermediate key in private application storage. The intermediate permits HTTPS certificates for `.local` names, private IPv4 addresses, and loopback. The phone folder contains only the public profile and certificate.
+- Restart the server after a network address change. It issues a new server certificate under the same trusted root. Open the new address and pair there if the browser doesn't remember it. A root replacement, such as a format upgrade or explicit certificate reset, requires installing a new profile or certificate.
+- On Windows, the remote can’t control apps running as administrator. On Linux, the virtual input device could reach the lock screen. Lazy Remote requires an active, unlocked logind session. On desktops other than GNOME and KDE, it also requires a readable desktop screen-lock status. Unsupported or unavailable lock detection disables Linux input.
 
-If you discover a security issue, use GitHub’s private vulnerability reporting if it’s available. For ordinary bug reports, include your macOS version, browser, and steps to reproduce. Keep pairing codes, certificate files, and device addresses out of public reports.
+If you discover a security issue, use GitHub’s private vulnerability reporting if it’s available. For ordinary bug reports, include your operating system version, browser, and steps to reproduce. Keep pairing codes, certificate files, and device addresses out of public reports.
 
 ## Troubleshooting
 
 | Symptom | Try this |
 | --- | --- |
 | The phone can’t reach the `.local` address | Make sure both devices are on the same Wi-Fi network. Select the numeric address in the launcher if it’s available. Guest Wi-Fi may block communication between devices. |
-| The numeric address is missing after a Wi-Fi change | Stop the server and run `./"Start Remote.command" --renew-certificate`. Replace the old phone profile with the new one. |
-| The browser shows a certificate warning | Confirm you opened the exact address displayed by Lazy Remote and installed the current certificate from your Mac. On iOS, check **Certificate Trust Settings** as well. |
-| The page connects but can’t move the cursor or type | Mac: use **Open Accessibility Settings** in the launcher and allow the app or helper named by macOS. Linux: run the `/dev/uinput` command from the setup guide, log out and in, then click **Check again**. |
+| The address changed after switching Wi-Fi | Restart the server and open the new numeric address. If the browser asks, scan the new pairing QR code. |
+| The browser shows a certificate warning | Confirm you opened the exact address displayed by Lazy Remote and installed the current certificate from your computer. On iOS, check **Certificate Trust Settings** as well. |
+| The page connects but can’t move the cursor or type | Mac: use **Open Accessibility Settings** in the launcher and allow the app or helper named by macOS. Linux: unlock the active desktop, confirm it reports lock state, then check `/dev/uinput` access in the setup guide. |
 | The phone can’t reach a Windows PC | Allow Lazy Remote on **Private networks** in **Windows Security → Firewall & network protection → Allow an app through firewall**, and make sure the Wi-Fi network profile is set to **Private**. |
-| A three-finger swipe has no effect | Check the corresponding Mac gesture and keyboard shortcut, then try **More → Two-finger Mac swipes**. |
+| A three-finger swipe has no effect | On the phone, tap **Mac swipes** above the trackpad and swipe with one finger. If the button is missing, check the Mac’s gesture and keyboard shortcut settings. |
 
 ## Development
 
@@ -120,7 +133,9 @@ python packaging/build_desktop.py
 
 **Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) runs the tests on all three systems and builds all three apps on every push. Push a tag such as `v1.2.0` and it publishes a release with the three downloads, `SHA256SUMS.txt`, and the notes in [packaging/release-notes.md](packaging/release-notes.md). Actions are pinned to commit hashes and bundled packages to exact versions in [packaging/requirements.txt](packaging/requirements.txt).
 
-The tests use temporary certificates and substitute input devices, so they can run without moving your cursor or typing.
+The unit tests use temporary certificates and substitute input devices. Release checks also start the packaged server on loopback to verify the phone profile, HTTPS, pairing, approval, and revocation.
+
+The phone scanner bundles [jsQR 1.4.0](https://github.com/cozmo/jsQR) under the [Apache 2.0 license](vendor/jsQR-LICENSE.txt).
 
 | Component | Role |
 | --- | --- |
