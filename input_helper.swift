@@ -111,7 +111,11 @@ func sendKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {
 }
 
 func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags) -> [CGEvent]? {
-    let source = CGEventSource(stateID: .privateState)
+    let source = CGEventSource(stateID: .hidSystemState)
+    let arrow = [kVK_LeftArrow, kVK_RightArrow, kVK_DownArrow, kVK_UpArrow].contains(Int(keyCode))
+    // macOS arrow key events carry these flags even without pressing Fn.
+    let arrowFlags: CGEventFlags = arrow ? [.maskSecondaryFn, .maskNumericPad] : []
+    let physicalFlags = flags.subtracting(arrowFlags)
     let modifiers: [(CGEventFlags, CGKeyCode, UInt64)] = [
         (.maskControl, CGKeyCode(kVK_Control), 0x01),
         (.maskShift, CGKeyCode(kVK_Shift), 0x02),
@@ -119,7 +123,7 @@ func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags)
         (.maskCommand, CGKeyCode(kVK_Command), 0x08),
         (.maskSecondaryFn, CGKeyCode(kVK_Function), 0),
     ]
-    let pressed = modifiers.filter { flags.contains($0.0) && !held.contains($0.0) }
+    let pressed = modifiers.filter { physicalFlags.contains($0.0) && !held.contains($0.0) }
     var events: [CGEvent] = []
     var current = held
 
@@ -137,7 +141,7 @@ func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags)
         guard append(code, .flagsChanged, current) else { return nil }
     }
     let sideFlags = pressed.reduce(UInt64(0)) { $0 | $1.2 }
-    let chord = flags.union(CGEventFlags(rawValue: sideFlags))
+    let chord = flags.union(arrowFlags).union(CGEventFlags(rawValue: sideFlags))
     guard append(keyCode, .keyDown, chord), append(keyCode, .keyUp, chord) else { return nil }
     for (mask, code, side) in pressed.reversed() {
         current.subtract([mask, CGEventFlags(rawValue: side)])
@@ -147,12 +151,26 @@ func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags)
 }
 
 func sendMacShortcut(name: String, keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
-    // The default Mission Control action has a public system app entry point.
-    // A customized keyboard binding still goes through the user's key chord.
-    if name == "swipe_up", keyCode == CGKeyCode(kVK_UpArrow), flags == .maskControl {
+    let modifiers = flags.subtracting([.maskSecondaryFn, .maskNumericPad])
+    if modifiers == .maskControl {
         let missionControl = URL(fileURLWithPath: "/System/Applications/Mission Control.app", isDirectory: true)
-        if FileManager.default.fileExists(atPath: missionControl.path), NSWorkspace.shared.open(missionControl) {
+        if name == "swipe_up", keyCode == CGKeyCode(kVK_UpArrow), NSWorkspace.shared.open(missionControl) {
             return true
+        }
+        if name == "swipe_down", keyCode == CGKeyCode(kVK_DownArrow) {
+            // The system's Mission Control launcher uses argument 2 for App Exposé.
+            // Run it without activating a different app, so it shows the current app's windows.
+            let process = Process()
+            process.executableURL = missionControl.appendingPathComponent("Contents/MacOS/Mission Control")
+            process.arguments = ["2"]
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                return true
+            } catch {
+                // Fall back to the configured keyboard shortcut if the system app cannot start.
+            }
         }
     }
     let held = CGEventSource.flagsState(.hidSystemState)
