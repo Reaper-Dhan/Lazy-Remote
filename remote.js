@@ -85,6 +85,8 @@ let manualPairing = false;
 let ready = false;
 let updatingSession = false;
 let checking = false;
+let statusFailures = 0;
+let dragRevision = 0;
 let suspended = false;
 let releaseDragOnResume = false;
 let revision = 0;
@@ -314,15 +316,24 @@ async function api(path, body, timeout = 7500) {
 }
 
 async function checkConnection() {
-  if (updatingSession || checking || suspended || busy || motionInFlight || document.hidden) return;
+  if (updatingSession || checking || suspended || document.hidden) return;
   checking = true;
   const started = revision;
+  const dragAtStart = dragRevision;
   try {
     let status = await api('/api/status');
     if (started !== revision || document.hidden) return;
     if (status.status === 401 && status.approved) {
       const claim = await api('/api/claim', {});
-      if (claim.status !== 200) throw new Error('Approval expired');
+      if (claim.status === 401 || claim.status === 409) {
+        if (started !== revision || document.hidden) return;
+        remembered = status.remembered;
+        awaitingApproval = false;
+        showPairing();
+        pairError.textContent = claim.error || 'Approval ended. Request access again.';
+        return;
+      }
+      if (claim.status !== 200) throw new Error('Approval request failed');
       if (started !== revision || document.hidden) {
         lockHiddenTab(claim.tab);
         return;
@@ -332,6 +343,7 @@ async function checkConnection() {
       status = await api('/api/status');
     }
     if (started !== revision || document.hidden) return;
+    statusFailures = 0;
     if (status.status === 401) {
       clearTab();
       releaseDragOnResume = false;
@@ -344,6 +356,9 @@ async function checkConnection() {
         if (awaitingApproval) pairError.textContent = 'Approval ended. Request access again.';
         awaitingApproval = false;
         showPairing();
+        if (status.new_pairing_required && !qrTicket) {
+          pairError.textContent = 'This page was reopened. On the computer, click Lock phone to get a fresh pairing QR or code.';
+        }
       }
     } else if (status.status === 200) {
       awaitingApproval = false;
@@ -355,18 +370,18 @@ async function checkConnection() {
       renderState(status.ready ? 'ready' : 'permission', status.ready
         ? 'Connected securely'
         : 'Allow mouse and keyboard control in Lazy Remote on the computer.');
-      if (!busy && !motionInFlight) {
+      if (!busy && !motionInFlight && dragAtStart === dragRevision) {
         updateDrag(status.dragging);
         if (releaseDragOnResume && status.ready && status.dragging) {
           enqueue([{ action: 'drag', active: false }]);
         }
       }
-      releaseDragOnResume = false;
+      if (releaseDragOnResume && status.ready && !status.dragging) releaseDragOnResume = false;
     } else {
       showOffline(status.error || 'Computer input is unavailable. Reconnecting…');
     }
   } catch {
-    if (started === revision) showOffline();
+    if (started === revision && (!ready || ++statusFailures >= 2)) showOffline();
   } finally {
     checking = false;
     if (started !== revision) checkConnection();
@@ -454,6 +469,7 @@ function suspendControls() {
   } else {
     releaseDragOnResume ||= paired;
   }
+  statusFailures = 0;
   for (const request of foregroundRequests) request.abort();
   renderState('checking', 'Checking connection…');
 }
@@ -510,6 +526,7 @@ function drainCommands() {
 
 async function sendCommand(command, message) {
   busy = true;
+  dragRevision++;
   if (command.action === 'type') sendingText = command.text;
   const started = revision;
   try {
@@ -517,9 +534,11 @@ async function sendCommand(command, message) {
     if (started !== revision) return;
     if (response.status === 200) {
       if (command.action === 'type') sendingText = null;
+      if (command.action === 'drag' && !command.active && !response.dragging) releaseDragOnResume = false;
       updateDrag(response.dragging);
       showToast(message);
     } else if (response.status === 401) {
+      revision++;
       clearTab();
       paired = false;
       renderState('checking', 'Access locked');
@@ -535,6 +554,7 @@ async function sendCommand(command, message) {
   } catch {
     if (started === revision) showOffline('Command could not be confirmed. Reconnecting…');
   } finally {
+    dragRevision++;
     if (command.action === 'type') sendingText = null;
     if (command.action === 'drag') dragPending = false;
     busy = false;
@@ -554,6 +574,7 @@ async function sendMotion(dx, dy) {
     }, 750);
     if (started !== revision) return;
     if (response.status === 401) {
+      revision++;
       clearTab();
       paired = false;
       renderState('checking', 'Access locked');

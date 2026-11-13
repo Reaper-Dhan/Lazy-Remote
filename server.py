@@ -350,15 +350,21 @@ class Remote:
         self.publish()
         return self.token, self.tab
 
-    def request_access(self, body=None, device=None):
+    def request_access(self, body=None, device=None, previous_session=None, previous_tab=None):
         with self.lock:
             now = time.monotonic()
             self.expire(now)
-            if self.token:
+            replace = (self.token is not None and previous_session is not None and previous_tab is None
+                       and hmac.compare_digest(previous_session, self.token))
+            if self.token and not replace:
                 raise RequestError(409, "A browser is already connected. Lock it before requesting access.")
             pending = self.pairing.pair(body, now) if body is not None else self.pairing.resume(device, now)
+            if replace:
+                self.revoke()
             self.publish()
-            return pending.token
+        if replace:
+            self.flush_drag_release()
+        return pending.token
 
     def decide(self, match, approve):
         with self.lock:
@@ -412,6 +418,9 @@ class Remote:
                     "remembered": self.pairing.browser.matches(device),
                     "match": pending.match if pending else None,
                     "approved": bool(pending and pending.approved),
+                    "new_pairing_required": bool(self.token and token and not tab
+                                                 and hmac.compare_digest(token, self.token)
+                                                 and not self.pairing.browser.matches(device)),
                 }
             self.last_presence = now
         ready = self.input_permission(wait=False)
@@ -707,8 +716,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path != "/api/pair" and body:
                 raise RequestError(400, "Expected an empty JSON object.")
             if self.path in ("/api/pair", "/api/resume"):
-                pending = (remote.request_access(body) if self.path == "/api/pair"
-                           else remote.request_access(device=self.token(DEVICE_COOKIE)))
+                pending = remote.request_access(
+                    body=body if self.path == "/api/pair" else None,
+                    device=self.token(DEVICE_COOKIE),
+                    previous_session=self.token(), previous_tab=self.tab(),
+                )
                 self.json_reply(202, {"ok": True}, cookies=((APPROVAL_COOKIE, pending, APPROVAL_LIFETIME),))
             elif self.path == "/api/claim":
                 token, tab, device = remote.claim(self.token(APPROVAL_COOKIE))

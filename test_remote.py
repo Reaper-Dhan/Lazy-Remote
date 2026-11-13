@@ -193,6 +193,21 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["protect_background"])
 
+    def test_reloaded_remembered_browser_can_request_a_new_session(self):
+        pending = self.begin({"code": self.code, "remember": True})
+        self.remote.decide(self.remote.snapshot()["match"], True)
+        _, headers, _ = self.request("/api/claim", {}, cookie=pending)
+        session, device = (value.split(";", 1)[0] for value in headers.get_all("Set-Cookie")
+                           if not value.startswith(APPROVAL_COOKIE))
+        self.assertEqual(self.request("/api/resume", {}, cookie=device)[0], 409)
+        status, headers, _ = self.request("/api/resume", {}, cookie=f"{session}; {device}")
+        self.assertEqual(status, 202)
+        next_pending = headers["Set-Cookie"].split(";", 1)[0]
+        self.assertEqual(self.request("/api/claim", {}, cookie=next_pending)[0], 409)
+        self.assertEqual(self.request("/api/status", cookie=session)[0], 401)
+        self.remote.decide(self.remote.snapshot()["match"], True)
+        self.assertEqual(self.request("/api/claim", {}, cookie=next_pending)[0], 200)
+
     def test_revoke_does_not_wait_for_native_input(self):
         cookie = self.pair().split(";", 1)[0]
         started = threading.Event()

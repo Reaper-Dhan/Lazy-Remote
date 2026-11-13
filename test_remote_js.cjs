@@ -20,7 +20,8 @@ function element() {
   };
 }
 
-async function remote({ unavailable = [], approve = false, protectBackground = true, reply, gestureSettings = {}, pairOrigins } = {}) {
+async function remote({ unavailable = [], approve = false, protectBackground = true, reply, statusReply,
+                        gestureSettings = {}, pairOrigins } = {}) {
   const elements = new Map();
   const bright = element();
   const space = element();
@@ -77,6 +78,7 @@ async function remote({ unavailable = [], approve = false, protectBackground = t
         return { status: 200, json: async () => ({}) };
       }
       if (path === '/api/status') {
+        if (statusReply) await statusReply();
         if (!authorized) return { status: 401, json: async () => ({
           approved, remembered: true, pairing_origins: pairOrigins,
           match: pendingPair ? '340287' : null,
@@ -125,6 +127,26 @@ async function remote({ unavailable = [], approve = false, protectBackground = t
 }
 
 const click = button => ({ action: 'click', button, count: 1 });
+
+test('status still checks in during a slow input and tolerates a missed poll', async () => {
+  let complete;
+  const blocked = new Promise(resolve => { complete = resolve; });
+  let fail = false;
+  const pad = await remote({
+    reply: () => blocked,
+    statusReply: () => { if (fail) throw new Error('Temporary network failure'); },
+  });
+  pad.left.events.click();
+  fail = true;
+  await pad.reconnect();
+  assert.equal(pad.requests.filter(request => request.path === '/api/status').length, 2);
+  assert.equal(pad.get('remoteControls').hidden, false);
+  fail = false;
+  await pad.reconnect();
+  complete();
+  await settle();
+  assert.equal(pad.get('connectionStatus').textContent, 'Connected securely');
+});
 
 test('both mouse buttons dispatch their own click immediately', async () => {
   const pad = await remote();
