@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import AppKit
 import Carbon
+import ApplicationServices
 
 // Disable stdout buffering
 setbuf(stdout, nil)
@@ -150,10 +151,109 @@ func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags)
     return events
 }
 
+private let missionControlApp = URL(fileURLWithPath: "/System/Applications/Mission Control.app", isDirectory: true)
+
+private func axAttribute<T>(_ element: AXUIElement, _ name: String) -> T? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+    return value as? T
+}
+
+private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
+    axAttribute(element, kAXChildrenAttribute) ?? []
+}
+
+private func axGroup(_ children: [AXUIElement], _ identifier: String) -> AXUIElement? {
+    children.first { (axAttribute($0, kAXIdentifierAttribute) as String?) == identifier }
+}
+
+private func axDisplayBounds(_ element: AXUIElement) -> CGRect? {
+    guard let position: AXValue = axAttribute(element, kAXPositionAttribute),
+          let size: AXValue = axAttribute(element, kAXSizeAttribute) else { return nil }
+    var point = CGPoint.zero
+    var dimensions = CGSize.zero
+    guard AXValueGetType(position) == .cgPoint, AXValueGetType(size) == .cgSize,
+          AXValueGetValue(position, .cgPoint, &point), AXValueGetValue(size, .cgSize, &dimensions)
+    else { return nil }
+    return CGRect(origin: point, size: dimensions)
+}
+
+private func spaceButtons(on root: AXUIElement, displayID: CGDirectDisplayID) -> [AXUIElement] {
+    let displays = axChildren(root).filter { (axAttribute($0, kAXIdentifierAttribute) as String?) == "mc.display" }
+    let bounds = CGDisplayBounds(displayID)
+    let display = displays.first { element in
+        if let id: UInt32 = axAttribute(element, "AXDisplayID") { return id == displayID }
+        return axDisplayBounds(element) == bounds
+    }
+    guard let display,
+          let bar = axGroup(axChildren(display), "mc.spaces"),
+          let list = axGroup(axChildren(bar), "mc.spaces.list") else { return [] }
+    return axChildren(list).filter { (axAttribute($0, kAXRoleAttribute) as String?) == kAXButtonRole }
+}
+
+// Read the display's current Space when its thumbnails don't expose selection.
+// This optional read-only symbol can disappear in a future macOS release.
+private func currentSpaceIndex(on displayID: CGDirectDisplayID, buttonCount: Int) -> Int? {
+    typealias Connection = @convention(c) () -> Int32
+    typealias DisplaySpaces = @convention(c) (Int32) -> Unmanaged<CFArray>?
+    guard let connection = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSMainConnectionID"),
+          let displays = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSCopyManagedDisplaySpaces"),
+          let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue(),
+          let name = CFUUIDCreateString(nil, uuid) as String?,
+          let data = unsafeBitCast(displays, to: DisplaySpaces.self)(
+              unsafeBitCast(connection, to: Connection.self)())?.takeRetainedValue() as? [[String: Any]],
+          let display = data.first(where: {
+              ($0["Display Identifier"] as? String)?.caseInsensitiveCompare(name) == .orderedSame
+          })
+              ?? (data.count == 1 ? data.first : nil),
+          let spaces = display["Spaces"] as? [[String: Any]], spaces.count == buttonCount,
+          let active = (display["Current Space"] as? [String: Any])?["id64"] as? UInt64 else { return nil }
+    return spaces.firstIndex { ($0["id64"] as? UInt64) == active }
+}
+
+private func switchSpace(offset: Int) -> String {
+    guard AXIsProcessTrusted() else { return "space_permission" }
+    guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first,
+          let manager = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.WindowManager").first
+    else { return "space_unavailable" }
+    let dockRoot = AXUIElementCreateApplication(dock.processIdentifier)
+    let root = AXUIElementCreateApplication(manager.processIdentifier)
+    AXUIElementSetMessagingTimeout(dockRoot, 0.2)
+    AXUIElementSetMessagingTimeout(root, 0.2)
+    var displayID = CGMainDisplayID()
+    if let point = CGEvent(source: nil)?.location {
+        var count: UInt32 = 0
+        CGGetDisplaysWithPoint(point, 1, &displayID, &count)
+        if count == 0 { displayID = CGMainDisplayID() }
+    }
+    // The Dock's empty Mission Control group appears before WindowManager's thumbnails.
+    let opened = axGroup(axChildren(dockRoot), "mc") == nil
+    if opened && !NSWorkspace.shared.open(missionControlApp) { return "space_unavailable" }
+    var switched = false
+    defer {
+        if opened && !switched && axGroup(axChildren(dockRoot), "mc") != nil {
+            _ = NSWorkspace.shared.open(missionControlApp)
+        }
+    }
+    let deadline = ProcessInfo.processInfo.systemUptime + 1.6
+    repeat {
+        let buttons = spaceButtons(on: root, displayID: displayID)
+        if let index = buttons.firstIndex(where: { (axAttribute($0, kAXSelectedAttribute) as Bool?) == true })
+            ?? currentSpaceIndex(on: displayID, buttonCount: buttons.count) {
+            let target = index + offset
+            guard buttons.indices.contains(target) else { return "space_edge" }
+            switched = AXUIElementPerformAction(buttons[target], kAXPressAction as CFString) == .success
+            return switched ? "ok" : "space_unavailable"
+        }
+        usleep(60000)
+    } while ProcessInfo.processInfo.systemUptime < deadline
+    return "space_unavailable"
+}
+
 func sendMacShortcut(name: String, keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
     let modifiers = flags.subtracting([.maskSecondaryFn, .maskNumericPad])
     if modifiers == .maskControl {
-        let missionControl = URL(fileURLWithPath: "/System/Applications/Mission Control.app", isDirectory: true)
+        let missionControl = missionControlApp
         if name == "swipe_up", keyCode == CGKeyCode(kVK_UpArrow), NSWorkspace.shared.open(missionControl) {
             return true
         }
@@ -313,8 +413,15 @@ while let line = readLine() {
         scrollMouse(dx: dx, dy: dy)
     case "shortcut":
         guard let name = json["name"] as? String,
-              let code = json["key_code"] as? UInt16, let flags = json["flags"] as? UInt64,
-              sendMacShortcut(name: name, keyCode: code, flags: CGEventFlags(rawValue: flags)) else {
+              let code = json["key_code"] as? UInt16, let flags = json["flags"] as? UInt64 else {
+            print("invalid")
+            continue
+        }
+        if #available(macOS 27, *), name == "swipe_left" || name == "swipe_right" {
+            print(switchSpace(offset: name == "swipe_left" ? 1 : -1))
+            continue
+        }
+        guard sendMacShortcut(name: name, keyCode: code, flags: CGEventFlags(rawValue: flags)) else {
             print("invalid")
             continue
         }

@@ -226,6 +226,13 @@ class InputBridge:
             reply = self.proc.stdout.readline(32).strip() if ready else b""
             if reply in (b"ok", b"permission"):
                 return reply == b"ok"
+            space_errors = {
+                b"space_edge": "There is no adjacent Space in that direction.",
+                b"space_permission": "Allow Accessibility access on the Mac to switch Spaces.",
+                b"space_unavailable": "Could not select a Space in Mission Control. Try again after it closes.",
+            }
+            if reply in space_errors:
+                raise RequestError(422, space_errors[reply])
         except OSError:
             pass
         self.close()
