@@ -3,15 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#10130f" media="(prefers-color-scheme: dark)" />
-  <meta name="theme-color" content="#f4f7ef" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#101317" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f2f4f5" media="(prefers-color-scheme: light)" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Lazy Remote" />
   <title>Lazy Remote</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="/assets/logo.svg" />
-  <link rel="apple-touch-icon" href="/assets/touch-icon.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/remote.css" />
   <script src="/remote.js" defer></script>
+  <script src="/pwa.js" defer></script>
+  <script src="/qr-scan.js" defer></script>
 </head>
 <body>
   <svg class="icon-library" width="0" height="0" aria-hidden="true" focusable="false">
@@ -62,9 +65,8 @@
       </div>
     </div>
     <div class="header-actions">
-      <button class="btn header-btn" type="button" data-drawer="open" aria-controls="drawerBackdrop"
-        aria-expanded="false" aria-label="More shortcuts" hidden>
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-more"/></svg><span>More</span>
+      <button class="btn header-btn" type="button" id="installApp" aria-label="Install Lazy Remote" hidden>
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-down"/></svg><span>Install</span>
       </button>
       <button class="btn header-btn" id="disconnectBtn" type="button" aria-label="Lock remote" hidden>
         <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"/></svg><span>Lock</span>
@@ -73,6 +75,9 @@
   </header>
 
   <main class="pair-panel" id="pairPanel" hidden>
+    <div class="pair-mark" aria-hidden="true">
+      <svg class="icon"><use href="#icon-windows"/></svg>
+    </div>
     <form id="pairForm" method="post" action="/api/pair">
       <h1 id="pairTitle">Pair this browser</h1>
       <p id="pairHelp">Scan the QR code on your computer or enter the pairing code.</p>
@@ -88,82 +93,123 @@
       </label>
       <p id="pairError" class="pair-error" role="alert"></p>
       <button id="pairSubmit" class="btn btn-accent" type="submit" disabled>Request access</button>
+      <button id="scanPairing" class="btn manual-pair" type="button" aria-haspopup="dialog">Scan pairing QR</button>
       <button id="enterCodeInstead" class="btn manual-pair" type="button" hidden>Enter a code instead</button>
     </form>
     <section id="pendingPanel" hidden>
       <h1>Approve on your computer</h1>
-      <p>Check that this number matches the request in Lazy Remote, then approve it there.</p>
-      <p class="match-number" id="matchNumber"></p>
+      <p class="match-number" id="matchNumber" aria-live="polite"></p>
+      <p>Compare this number with the one on your computer, then approve the request there.</p>
     </section>
   </main>
 
+  <main class="pair-panel connection-panel" id="connectionPanel">
+    <div class="pair-mark" aria-hidden="true">
+      <svg class="icon"><use href="#icon-windows"/></svg>
+    </div>
+    <h1 id="connectionTitle">Connecting to your computer</h1>
+    <p id="connectionHelp">Keep Lazy Remote open on your computer.</p>
+    <button type="button" class="btn btn-accent" id="retryConnection" hidden>Try again</button>
+  </main>
+
   <main id="remoteControls" class="remote-controls" aria-label="Computer controls" inert hidden>
-    <section class="control-panel" aria-labelledby="playbackTitle">
-      <h2 id="playbackTitle">Playback</h2>
-      <div class="media-grid">
-          <button type="button" class="btn media-btn" data-key="left"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-rewind"/></svg><span>−5 sec</span></button>
-          <button type="button" class="btn media-btn" data-key="f"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fullscreen"/></svg><span>Fullscreen</span></button>
-          <button type="button" class="btn media-btn play-btn" data-key="space"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-play"/></svg><span>Play/pause</span></button>
-          <button type="button" class="btn media-btn" data-key="escape"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-exit"/></svg><span>Escape</span></button>
-          <button type="button" class="btn media-btn" data-key="right"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fast-forward"/></svg><span>+5 sec</span></button>
-      </div>
-      <div class="media-grid volume-grid">
-          <button type="button" class="btn media-btn" data-key="vol_down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-down"/></svg><span>Volume −</span></button>
-          <button type="button" class="btn media-btn" data-key="vol_up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-up"/></svg><span>Volume +</span></button>
-          <button type="button" class="btn media-btn" data-key="vol_mute"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-mute"/></svg><span>Mute</span></button>
-          <button type="button" class="btn media-btn" data-key="up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-up"/></svg><span>Player +</span></button>
-          <button type="button" class="btn media-btn" data-key="down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-down"/></svg><span>Player −</span></button>
-      </div>
-    </section>
+    <div class="remote-workspace" id="remoteWorkspace">
+      <div class="trackpad-view" id="trackpadView">
+        <section class="trackpad-module" aria-labelledby="trackpadTitle">
+          <div class="trackpad-header">
+            <h1 id="trackpadTitle">Trackpad</h1>
+            <button type="button" class="btn swipe-mode" id="swipeModeBtn" aria-pressed="false"
+              aria-describedby="gestureHint" hidden>Mac swipes</button>
+            <div class="sensitivity-wrap" id="controlSettings" hidden>
+              <label for="speedSlider">Speed</label>
+              <input type="range" id="speedSlider" min="0.8" max="4.0" step="0.2" value="2.0" />
+              <output id="speedValue" for="speedSlider">2.0×</output>
+            </div>
+          </div>
+          <div class="trackpad-container" id="trackpad" aria-describedby="gestureHint">
+            <div class="trackpad-hint">
+              <svg class="icon trackpad-cursor" aria-hidden="true" focusable="false"><use href="#icon-cursor"/></svg>
+              <strong id="trackpadModeTitle">Move to point</strong>
+              <p id="gestureHint">Tap to click. Two fingers for a right click.</p>
+            </div>
+            <div class="scroll-strip" id="scrollStrip">
+              <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-scroll"/></svg><span>Scroll</span>
+            </div>
+          </div>
 
-    <div class="top-actions" role="group" aria-label="Quick actions">
-      <button type="button" class="btn btn-danger" data-key="close_tab" data-message="Closed ad tab (⌘W)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close-tab"/></svg><span>Close ad tab</span></button>
-      <button type="button" class="btn" data-key="prev_tab" data-message="Switched tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Previous tab</span></button>
-      <button type="button" class="btn" data-key="next_video" data-message="Next video (Shift+N)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-next"/></svg><span>Next video</span></button>
+          <div class="mouse-buttons" role="group" aria-label="Mouse buttons">
+          <button type="button" class="btn mouse-btn" data-click="left" data-count="1" data-message="Left click">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-left"/></svg><span>Left click</span>
+          </button>
+          <button type="button" class="btn mouse-btn" id="dragBtn" aria-pressed="false">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-hold"/></svg><span id="dragLabel">Hold</span>
+          </button>
+          <button type="button" class="btn mouse-btn" data-click="right" data-count="1" data-message="Right click">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-right"/></svg><span>Right click</span>
+          </button>
+          </div>
+        </section>
+
+        <div class="keyboard-bar">
+          <div class="keyboard-field">
+            <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-keyboard"/></svg>
+            <input type="text" id="kbInput" aria-label="Type on computer" spellcheck="false"
+              class="keyboard-input" placeholder="Type on your computer" autocomplete="off"
+              autocorrect="off" autocapitalize="off" />
+          </div>
+          <button type="button" class="btn kb-btn" aria-label="Backspace" data-key="backspace"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-backspace"/></svg></button>
+          <button type="button" class="btn kb-btn btn-accent" id="enterBtn" aria-label="Enter"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-return"/></svg></button>
+        </div>
+
+        <div class="typing-recovery" id="typingNotice" role="status" hidden></div>
+        <button type="button" class="btn" id="sendTextBtn" hidden>Send text</button>
+      </div>
+
+      <div class="media-view" id="mediaView" hidden>
+        <section class="playback-panel" aria-labelledby="playbackTitle">
+          <h1 id="playbackTitle">Playback</h1>
+          <div class="transport">
+            <button type="button" class="btn media-btn" data-key="left"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-rewind"/></svg><span>−5 sec</span></button>
+            <button type="button" class="btn media-btn play-btn" data-key="space"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-play"/></svg><span>Play/pause</span></button>
+            <button type="button" class="btn media-btn" data-key="right"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fast-forward"/></svg><span>+5 sec</span></button>
+          </div>
+        </section>
+
+        <section class="media-section" aria-labelledby="volumeTitle">
+          <h2 id="volumeTitle">System volume</h2>
+          <div class="media-grid">
+            <button type="button" class="btn media-btn" data-key="vol_down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-down"/></svg><span>Volume −</span></button>
+            <button type="button" class="btn media-btn" data-key="vol_mute"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-mute"/></svg><span>Mute</span></button>
+            <button type="button" class="btn media-btn" data-key="vol_up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-volume-up"/></svg><span>Volume +</span></button>
+          </div>
+        </section>
+
+        <section class="media-section" aria-labelledby="playerTitle">
+          <h2 id="playerTitle">Player and browser</h2>
+          <div class="media-grid">
+            <button type="button" class="btn media-btn" data-key="down"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-down"/></svg><span>Player volume −</span></button>
+            <button type="button" class="btn media-btn" data-key="up"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-up"/></svg><span>Player volume +</span></button>
+            <button type="button" class="btn media-btn" data-key="f"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-fullscreen"/></svg><span>Fullscreen</span></button>
+            <button type="button" class="btn media-btn" data-key="escape"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-exit"/></svg><span>Escape</span></button>
+            <button type="button" class="btn media-btn" data-key="next_video" data-message="Next video"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-next"/></svg><span>Next video</span></button>
+            <button type="button" class="btn media-btn" data-key="prev_tab" data-message="Switched tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Previous tab</span></button>
+            <button type="button" class="btn media-btn" data-key="close_tab" data-message="Closed tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close-tab"/></svg><span>Close tab</span></button>
+          </div>
+        </section>
+      </div>
     </div>
 
-    <section class="trackpad-module" aria-labelledby="trackpadTitle">
-      <div class="trackpad-header">
-        <h2 id="trackpadTitle">Trackpad</h2>
-        <div class="sensitivity-wrap" id="controlSettings" hidden>
-          <label for="speedSlider">Speed</label>
-          <input type="range" id="speedSlider" min="0.8" max="4.0" step="0.2" value="2.0" />
-          <output id="speedValue" for="speedSlider">2.0×</output>
-        </div>
-      </div>
-      <div class="trackpad-container" id="trackpad" aria-describedby="gestureHint">
-        <div class="trackpad-hint">
-          <svg class="icon trackpad-cursor" aria-hidden="true" focusable="false"><use href="#icon-cursor"/></svg>
-          <p id="gestureHint">One finger moves the pointer.</p>
-        </div>
-        <div class="scroll-strip" id="scrollStrip">
-          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-scroll"/></svg><span>Scroll</span>
-        </div>
-      </div>
-    </section>
-
-    <div class="mouse-buttons" role="group" aria-label="Mouse buttons">
-      <button type="button" class="btn mouse-btn" data-click="left" data-count="1" data-message="Left click">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-left"/></svg><span>Left click</span>
+    <nav class="remote-dock" id="remoteDock" aria-label="Remote controls">
+      <button class="btn dock-btn" type="button" data-view="trackpad" aria-controls="trackpadView" aria-pressed="true">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-cursor"/></svg>Trackpad
       </button>
-      <button type="button" class="btn mouse-btn" id="dragBtn" aria-pressed="false">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-hold"/></svg><span id="dragLabel">Hold</span>
+      <button class="btn dock-btn" type="button" data-view="media" aria-controls="mediaView" aria-pressed="false">
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-play"/></svg>Media
       </button>
-      <button type="button" class="btn mouse-btn" data-click="right" data-count="1" data-message="Right click">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-click-right"/></svg><span>Right click</span>
+      <button class="btn dock-btn" type="button" data-drawer="open" aria-controls="drawerBackdrop" aria-expanded="false" hidden>
+        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-grid"/></svg>Shortcuts
       </button>
-    </div>
-
-    <div class="keyboard-bar">
-      <div class="keyboard-field">
-        <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-keyboard"/></svg>
-        <input type="text" id="kbInput" aria-label="Type on computer" spellcheck="false"
-          class="keyboard-input" placeholder="Type on your computer" autocomplete="off"
-          autocorrect="off" autocapitalize="off" />
-      </div>
-      <button type="button" class="btn kb-btn" aria-label="Backspace" data-key="backspace"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-backspace"/></svg></button>
-      <button type="button" class="btn kb-btn btn-accent" id="enterBtn" aria-label="Enter"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-return"/></svg></button>
-    </div>
+    </nav>
 
     <div class="drawer-backdrop" id="drawerBackdrop" hidden>
       <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="shortcutTitle">
@@ -171,15 +217,12 @@
           <h2 id="shortcutTitle">Shortcuts</h2>
           <button type="button" class="btn compact-btn" data-drawer="close">Done</button>
         </div>
-        <button type="button" class="btn swipe-mode" id="swipeModeBtn" aria-pressed="false"
-          aria-describedby="swipeModeHint" hidden>Two-finger Mac swipes</button>
-        <p class="swipe-mode-hint" id="swipeModeHint" hidden></p>
         <div class="drawer-grid">
           <button type="button" class="btn media-btn" data-key="swipe_up" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-grid"/></svg><span>Mission Control</span></button>
           <button type="button" class="btn media-btn" data-key="swipe_down" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>App Windows</span></button>
           <button type="button" class="btn media-btn" data-key="swipe_right" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Previous Space</span></button>
           <button type="button" class="btn media-btn" data-key="swipe_left" data-swipe hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-forward"/></svg><span>Next Space</span></button>
-          <button type="button" class="btn media-btn" data-key="reopen_tab" data-message="Reopened Tab (⌘⇧T)"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-restore"/></svg><span>Reopen Tab</span></button>
+          <button type="button" class="btn media-btn" data-key="reopen_tab" data-message="Reopened tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-restore"/></svg><span>Reopen Tab</span></button>
           <button type="button" class="btn media-btn" data-key="next_tab" data-message="Next Tab"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-forward"/></svg><span>Next Tab</span></button>
           <button type="button" class="btn media-btn" data-key="refresh" data-message="Refreshed Page"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-refresh"/></svg><span>Refresh</span></button>
           <button type="button" class="btn media-btn" data-key="cmd_left" data-message="Browser Back"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"/></svg><span>Page Back</span></button>
@@ -197,5 +240,21 @@
       </div>
     </div>
   </main>
+  <dialog class="install-dialog scan-dialog" id="scanDialog" aria-labelledby="scanTitle">
+    <h1 id="scanTitle">Scan pairing QR</h1>
+    <video id="scanVideo" autoplay muted playsinline aria-label="Camera preview" hidden></video>
+    <p id="scanStatus" role="status"></p>
+    <button type="button" class="btn btn-accent" id="startCamera" hidden>Start camera</button>
+    <button type="button" class="btn" id="takeQrPhoto">Take QR photo</button>
+    <input id="qrPhoto" type="file" accept="image/*" capture="environment" hidden />
+    <form method="dialog"><button type="submit" class="btn" autofocus>Cancel</button></form>
+  </dialog>
+  <dialog class="install-dialog" id="installHelp" aria-labelledby="installTitle">
+    <h1 id="installTitle">Add Lazy Remote</h1>
+    <p><strong>iPhone or iPad</strong><br />In Safari, tap Share → Add to Home Screen. Turn on Open as Web App if shown, then tap Add.</p>
+    <p><strong>Android</strong><br />Open your browser menu and choose Install app or Add to Home screen.</p>
+    <p>Open the new icon and scan the pairing QR or enter the code from your computer if prompted.</p>
+    <form method="dialog"><button type="submit" class="btn btn-accent" autofocus>Done</button></form>
+  </dialog>
 </body>
 </html>

@@ -14,7 +14,13 @@ for size in 16 32 128 256 512; do
     /usr/bin/sips -z "$retina" "$retina" assets/logo.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 /usr/bin/iconutil -c icns "$iconset" -o "$app/Contents/Resources/LazyRemote.icns"
-cat > "$app/Contents/Info.plist" <<'PLIST'
+release_version=0.0.0
+build_version=1
+if [[ ${GITHUB_REF_NAME:-} =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    release_version="${BASH_REMATCH[1]}"
+    build_version="$release_version"
+fi
+cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -24,8 +30,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Lazy Remote</string>
     <key>CFBundleIconFile</key><string>LazyRemote.icns</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>$build_version</string>
+    <key>CFBundleShortVersionString</key><string>$release_version</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect your paired phone to Lazy Remote on this Mac.</string>
@@ -49,9 +55,11 @@ universal "$app/Contents/MacOS/LazyRemote" -parse-as-library Launcher.swift
 
 # Everything the server needs ships inside the app, so users only download the app.
 server="$app/Contents/Resources/server"
-mkdir -p "$server/assets"
-cp auth.py platform_support.py server.py tls_setup.py index.html remote.js remote.css "$server/"
-cp assets/logo.svg assets/touch-icon.png "$server/assets/"
+mkdir -p "$server/assets" "$server/vendor"
+cp auth.py platform_support.py server.py tls_setup.py index.html remote.js remote.css pwa.js qr-scan.js service-worker.js manifest.webmanifest offline.html "$server/"
+cp assets/logo.svg assets/touch-icon.png assets/apple-touch-icon.png assets/app-icon-192.png assets/app-icon-512.png "$server/assets/"
+cp vendor/jsQR.js vendor/jsQR-LICENSE.txt "$server/vendor/"
+cp LICENSE "$app/Contents/Resources/LICENSE.txt"
 universal "$server/input_helper" input_helper.swift
 /usr/bin/codesign --force --sign - --identifier local.couch-remote.input-helper "$server/input_helper"
 

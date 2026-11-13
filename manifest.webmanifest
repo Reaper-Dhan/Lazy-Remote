@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Lazy Remote",
+  "short_name": "Lazy Remote",
+  "description": "Use your phone as a trackpad, keyboard, and media remote for your computer.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#101317",
+  "theme_color": "#101317",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/assets/app-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/app-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

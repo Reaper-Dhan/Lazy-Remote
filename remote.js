@@ -4,6 +4,8 @@ const speedSlider = document.getElementById('speedSlider');
 const speedValue = document.getElementById('speedValue');
 const gestureHint = document.getElementById('gestureHint');
 const kbInput = document.getElementById('kbInput');
+const sendTextBtn = document.getElementById('sendTextBtn');
+const typingNotice = document.getElementById('typingNotice');
 const dragBtn = document.getElementById('dragBtn');
 const dragLabel = document.getElementById('dragLabel');
 const toast = document.getElementById('toast');
@@ -22,20 +24,30 @@ const pendingPanel = document.getElementById('pendingPanel');
 const matchNumber = document.getElementById('matchNumber');
 const pairError = document.getElementById('pairError');
 const pairSubmit = document.getElementById('pairSubmit');
+const scanPairing = document.getElementById('scanPairing');
 const remoteControls = document.getElementById('remoteControls');
+const remoteWorkspace = document.getElementById('remoteWorkspace');
+const remoteDock = document.getElementById('remoteDock');
+const header = document.querySelector('.header');
+const trackpadView = document.getElementById('trackpadView');
+const mediaView = document.getElementById('mediaView');
+const viewButtons = document.querySelectorAll('[data-view]');
+const connectionPanel = document.getElementById('connectionPanel');
+const connectionTitle = document.getElementById('connectionTitle');
+const connectionHelp = document.getElementById('connectionHelp');
+const retryConnection = document.getElementById('retryConnection');
 const controlSettings = document.getElementById('controlSettings');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const drawer = document.getElementById('drawerBackdrop');
 const drawerTrigger = document.querySelector('[data-drawer="open"]');
 const swipeModeBtn = document.getElementById('swipeModeBtn');
-const swipeModeHint = document.getElementById('swipeModeHint');
+const trackpadModeTitle = document.getElementById('trackpadModeTitle');
 
 let sensitivity = Number(speedSlider.value);
-let twoFingerSwipes = false;
+let macSwipeMode = false;
 try {
   const saved = Number(localStorage.getItem('remote_speed'));
   if (saved >= 0.8 && saved <= 4) sensitivity = saved;
-  twoFingerSwipes = localStorage.getItem('remote_two_finger_swipes') === 'true';
 } catch {
   // The remote can run with browser storage disabled.
 }
@@ -61,9 +73,12 @@ speedSlider.addEventListener('change', changeSpeed);
 
 const qrValue = new URLSearchParams(location.hash.slice(1)).get('pair');
 let qrTicket = /^[A-Za-z0-9_-]{43}$/.test(qrValue ?? '') ? qrValue : null;
+let pairingOrigins = new Set([location.origin]);
 if (qrValue !== null) history.replaceState(null, '', location.pathname + location.search);
 
 let paired = false;
+let tab = null;
+let protectBackground = true;
 let remembered = false;
 let awaitingApproval = false;
 let manualPairing = false;
@@ -77,7 +92,6 @@ let dragLocked = false;
 let dragPending = false;
 let busy = false;
 let motionInFlight = 0;
-let motionStream;
 let motionSequence = 0;
 let motionX = 0;
 let motionY = 0;
@@ -87,39 +101,43 @@ let accumDy = 0;
 let accumScrollX = 0;
 let accumScrollY = 0;
 let toastTimer;
+let sendingText = null;
+let textNeedsReview = false;
 const pending = [];
 const foregroundRequests = new Set();
 const gestures = {
   scroll: true, horizontal_scroll: true,
-  natural_scroll: true, pinch_zoom: false, three_finger_drag: false, swipes: []
+  natural_scroll: true, pinch_zoom: false, three_finger_drag: false, swipes: [], swipe_fingers: {}
 };
 
-function swipeModeEnabled() {
-  return twoFingerSwipes && gestures.swipes.length > 0;
-}
+const swipeLabels = {
+  swipe_up: '↑ Mission Control',
+  swipe_down: '↓ App Windows',
+  swipe_left: '← Next Space',
+  swipe_right: '→ Previous Space',
+};
 
 function updateGestureSettings(settings) {
   Object.assign(gestures, settings);
-  const hints = ['One finger moves the pointer', 'Tap to click', 'Two-finger tap to right-click'];
-  if (swipeModeEnabled()) {
-    hints.push('Two-finger Mac swipes');
-  } else {
-    if (gestures.scroll) hints.push('Two-finger scroll');
-    if (gestures.pinch_zoom) hints.push('Pinch to zoom');
-  }
+  if (!gestures.swipes.length) macSwipeMode = false;
+  const hints = ['Tap to click', 'Two fingers to right-click'];
+  if (gestures.scroll) hints.push('Two-finger scroll');
+  if (gestures.pinch_zoom) hints.push('Pinch to zoom');
   if (gestures.three_finger_drag) hints.push('Three-finger drag');
-  if (gestures.swipes.length && !swipeModeEnabled()) hints.push('Three-finger swipes');
+  const swipeCounts = new Set(gestures.swipes.flatMap(swipe => gestures.swipe_fingers[swipe] || [3]));
+  if (swipeCounts.has(3)) hints.push('Three-finger Mac swipes');
+  else if (swipeCounts.has(4)) hints.push('Four-finger Mac swipes');
   for (const button of drawer.querySelectorAll('[data-swipe]')) {
     button.hidden = !gestures.swipes.includes(button.dataset.key);
   }
-  const hint = hints.join(' · ');
+  const hint = (macSwipeMode ? gestures.swipes.map(swipe => swipeLabels[swipe]) : hints).join(' · ');
   if (gestureHint.textContent !== hint) gestureHint.textContent = hint;
+  const title = macSwipeMode ? 'Swipe with one finger' : 'Move to point';
+  if (trackpadModeTitle.textContent !== title) trackpadModeTitle.textContent = title;
+  trackpad.classList.toggle('swipe-active', macSwipeMode);
   scrollStrip.hidden = !gestures.scroll;
-  swipeModeBtn.hidden = swipeModeHint.hidden = gestures.swipes.length === 0;
-  swipeModeBtn.setAttribute('aria-pressed', String(swipeModeEnabled()));
-  swipeModeHint.textContent = swipeModeEnabled()
-    ? 'On. Swipe with two fingers for Mac shortcuts. Use the Scroll strip to scroll.'
-    : 'Off. Turn this on if iOS intercepts three-finger swipes.';
+  swipeModeBtn.hidden = gestures.swipes.length === 0;
+  swipeModeBtn.setAttribute('aria-pressed', String(macSwipeMode));
 }
 
 function updateAvailableKeys(unavailable) {
@@ -141,10 +159,26 @@ function toggleDrawer(open, restoreFocus = true) {
   if (open && !ready) return;
   drawer.hidden = !open;
   drawerTrigger.setAttribute('aria-expanded', String(open));
+  remoteWorkspace.inert = remoteDock.inert = header.inert = open;
   if (open) {
     drawer.querySelector('[data-drawer="close"]').focus();
   } else if (restoreFocus) {
     drawerTrigger.focus();
+  }
+}
+
+function showView(view) {
+  const media = view === 'media';
+  if (media && !trackpadView.hidden) {
+    if (gestureDrag) releaseGestureDrag();
+    else if (dragLocked || dragPending) enqueue([{ action: 'drag', active: false }]);
+    resetGesture();
+  }
+  trackpadView.hidden = media;
+  mediaView.hidden = !media;
+  remoteWorkspace.scrollTop = 0;
+  for (const button of viewButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.view === view));
   }
 }
 
@@ -164,22 +198,36 @@ function renderState(state, message) {
   statusDot.dataset.state = state;
   if (connectionStatus.textContent !== message) connectionStatus.textContent = message;
   disconnectBtn.hidden = !paired;
-  remoteControls.hidden = !paired;
+  remoteControls.hidden = !ready;
   remoteControls.inert = !ready;
   controlSettings.hidden = !ready;
   drawerTrigger.hidden = !ready;
   pairPanel.hidden = state !== 'pair' && state !== 'pending';
+  connectionPanel.hidden = ready || !pairPanel.hidden;
+  if (!connectionPanel.hidden) {
+    connectionTitle.textContent = state === 'offline' ? 'Computer unavailable'
+      : state === 'permission' ? 'Input access needed' : 'Connecting to your computer';
+    connectionHelp.textContent = state === 'offline' ? 'Check that both devices are on the same network and the server is running.'
+      : state === 'permission' ? message : 'Keep Lazy Remote open on your computer.';
+    retryConnection.hidden = state === 'checking';
+  }
   pairForm.hidden = state === 'pending';
   pendingPanel.hidden = state !== 'pending';
   if (!ready) {
+    preserveText();
     pending.length = 0;
     accumDx = accumDy = accumScrollX = accumScrollY = 0;
     dragPending = false;
-    motionStream = undefined;
     resetGesture();
     updateDrag(false);
+    macSwipeMode = false;
     toggleDrawer(false, false);
   }
+}
+
+function clearTab() {
+  tab = null;
+  motionSequence = motionX = motionY = 0;
 }
 
 function showPairing(message = 'Access locked') {
@@ -189,13 +237,34 @@ function showPairing(message = 'Access locked') {
   pairTitle.textContent = returning ? 'Reconnect' : 'Pair this browser';
   pairHelp.textContent = returning
     ? 'Request access, then approve it on your computer.'
-    : qrTicket ? 'Approve this session on your computer after sending the request.'
+    : qrTicket ? 'Pairing QR ready. Request access, then approve it on your computer.'
       : 'Scan the QR code on your computer or enter the pairing code.';
   pairCodeFields.hidden = !needsCode;
   pairCode.required = needsCode;
   rememberFields.hidden = returning;
   enterCodeInstead.hidden = needsCode;
-  renderState('pair', message);
+  renderState('pair', qrTicket ? 'QR code ready' : message);
+}
+
+function acceptScannedPairingLink(text) {
+  if (paired || awaitingApproval || updatingSession) throw new Error('Finish the current request first.');
+  let link;
+  try {
+    link = new URL(text);
+  } catch {
+    throw new Error('This is not a Lazy Remote pairing QR.');
+  }
+  const ticket = /^#pair=([A-Za-z0-9_-]{43})$/.exec(link.hash);
+  if (link.protocol !== 'https:' || link.username || link.password || link.pathname !== '/' || link.search || !ticket) {
+    throw new Error('This is not a Lazy Remote pairing QR.');
+  }
+  if (!pairingOrigins.has(link.origin)) {
+    throw new Error('This QR is for another address. Open the address shown on your computer, then scan again.');
+  }
+  qrTicket = ticket[1];
+  manualPairing = false;
+  pairError.textContent = '';
+  showPairing();
 }
 
 function showPending(match) {
@@ -208,6 +277,21 @@ function showOffline(message = 'Computer unreachable. Reconnecting…') {
   renderState('offline', message);
 }
 
+function sessionHeaders(body, sessionTab) {
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  if (sessionTab) headers['X-Lazy-Remote-Tab'] = sessionTab;
+  return headers;
+}
+
+function lockHiddenTab(sessionTab) {
+  if (!sessionTab) return;
+  // Keep this small so the browser can finish sending it after the page is hidden.
+  fetch('/api/disconnect', {
+    method: 'POST', body: '{}', headers: sessionHeaders({}, sessionTab),
+    credentials: 'same-origin', cache: 'no-store', keepalive: true
+  }).catch(() => {});
+}
+
 async function api(path, body, timeout = 7500) {
   const abort = new AbortController();
   const foregroundOnly = path === '/api/status' || path === '/api/cmd';
@@ -216,7 +300,7 @@ async function api(path, body, timeout = 7500) {
   try {
     const response = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      headers: sessionHeaders(body, tab),
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'same-origin',
       cache: 'no-store',
@@ -239,13 +323,20 @@ async function checkConnection() {
     if (status.status === 401 && status.approved) {
       const claim = await api('/api/claim', {});
       if (claim.status !== 200) throw new Error('Approval expired');
-      if (started !== revision || document.hidden) return;
+      if (started !== revision || document.hidden) {
+        lockHiddenTab(claim.tab);
+        return;
+      }
+      tab = claim.tab;
+      protectBackground = claim.protect_background !== false;
       status = await api('/api/status');
     }
     if (started !== revision || document.hidden) return;
     if (status.status === 401) {
+      clearTab();
       releaseDragOnResume = false;
       remembered = status.remembered;
+      pairingOrigins = new Set([location.origin, ...(status.pairing_origins || [])]);
       if (status.match) {
         awaitingApproval = true;
         showPending(status.match);
@@ -258,6 +349,7 @@ async function checkConnection() {
       awaitingApproval = false;
       manualPairing = false;
       paired = true;
+      protectBackground = status.protect_background !== false;
       updateGestureSettings(status.gestures);
       updateAvailableKeys(status.unavailable || []);
       renderState(status.ready ? 'ready' : 'permission', status.ready
@@ -299,6 +391,7 @@ pairForm.addEventListener('submit', async (event) => {
   updatingSession = true;
   revision++;
   pairSubmit.disabled = true;
+  scanPairing.disabled = true;
   pairSubmit.textContent = 'Sending request…';
   pairError.textContent = '';
   const returning = pairCodeFields.hidden && !qrTicket;
@@ -320,6 +413,7 @@ pairForm.addEventListener('submit', async (event) => {
   } finally {
     updatingSession = false;
     pairSubmit.disabled = false;
+    scanPairing.disabled = false;
     pairSubmit.textContent = 'Request access';
     if (awaitingApproval) checkConnection();
   }
@@ -334,6 +428,7 @@ disconnectBtn.addEventListener('click', async () => {
   try {
     const response = await api('/api/disconnect', {});
     if (response.status === 200 || response.status === 401) {
+      clearTab();
       paired = false;
       renderState('checking', 'Access locked');
     } else {
@@ -352,12 +447,15 @@ function suspendControls() {
   if (suspended) return;
   suspended = true;
   revision++;
-  releaseDragOnResume ||= paired;
-  // Keep a settled stream. Start fresh if a movement may have been lost on suspension.
-  const settledStream = motionInFlight === 0 ? motionStream : undefined;
+  if (protectBackground) {
+    lockHiddenTab(tab);
+    clearTab();
+    paired = false;
+  } else {
+    releaseDragOnResume ||= paired;
+  }
   for (const request of foregroundRequests) request.abort();
   renderState('checking', 'Checking connection…');
-  motionStream = settledStream;
 }
 
 function resumeControls() {
@@ -380,7 +478,8 @@ function takeMotion() {
   if (Math.abs(accumScrollX) >= 1 || Math.abs(accumScrollY) >= 1) {
     const dx = boundedDelta(Math.round(accumScrollX));
     const dy = boundedDelta(Math.round(accumScrollY));
-    accumScrollX = accumScrollY = 0;
+    accumScrollX -= dx;
+    accumScrollY -= dy;
     return { action: 'scroll', dx, dy };
   }
   return null;
@@ -411,24 +510,32 @@ function drainCommands() {
 
 async function sendCommand(command, message) {
   busy = true;
+  if (command.action === 'type') sendingText = command.text;
   const started = revision;
   try {
     const response = await api('/api/cmd', command);
     if (started !== revision) return;
     if (response.status === 200) {
+      if (command.action === 'type') sendingText = null;
       updateDrag(response.dragging);
       showToast(message);
     } else if (response.status === 401) {
+      clearTab();
       paired = false;
       renderState('checking', 'Access locked');
     } else if (response.status === 503) {
       showOffline(response.error);
     } else {
+      if (command.action === 'type') {
+        preserveText(false);
+        pending.length = 0;
+      }
       showToast(response.error || 'Command failed.');
     }
   } catch {
     if (started === revision) showOffline('Command could not be confirmed. Reconnecting…');
   } finally {
+    if (command.action === 'type') sendingText = null;
     if (command.action === 'drag') dragPending = false;
     busy = false;
     if (!paired || started !== revision) checkConnection();
@@ -437,25 +544,20 @@ async function sendCommand(command, message) {
 }
 
 async function sendMotion(dx, dy) {
-  if (!motionStream) {
-    motionStream = Array.from(crypto.getRandomValues(new Uint8Array(16)),
-      byte => byte.toString(16).padStart(2, '0')).join('');
-    motionSequence = motionX = motionY = 0;
-  }
   motionX += dx;
   motionY += dy;
   const started = revision;
-  const stream = motionStream;
   motionInFlight++;
   try {
     const response = await api('/api/cmd', {
-      action: 'motion', stream, seq: ++motionSequence, dx: motionX, dy: motionY
+      action: 'motion', seq: ++motionSequence, dx: motionX, dy: motionY
     }, 750);
-    if (started !== revision || stream !== motionStream) return;
+    if (started !== revision) return;
     if (response.status === 401) {
+      clearTab();
       paired = false;
       renderState('checking', 'Access locked');
-    } else if (response.status === 503 || response.status === 409) {
+    } else if (response.status === 503) {
       showOffline(response.error);
     }
   } catch {
@@ -491,7 +593,9 @@ function sendClick(button = 'left', count = 1, message = '') {
 }
 
 function sendKey(name, message = '') {
-  if (enqueue([{ action: 'key', name }], message)) vibrate(15);
+  if (!enqueue([{ action: 'key', name }], message)) return false;
+  vibrate(15);
+  return true;
 }
 
 dragBtn.addEventListener('click', () => {
@@ -509,14 +613,14 @@ document.querySelectorAll('[data-click]').forEach(button => {
   ));
 });
 drawerTrigger.addEventListener('click', () => toggleDrawer(true));
+for (const button of viewButtons) button.addEventListener('click', () => showView(button.dataset.view));
+retryConnection.addEventListener('click', checkConnection);
 swipeModeBtn.addEventListener('click', () => {
-  if (!gestures.swipes.length) return;
-  twoFingerSwipes = !twoFingerSwipes;
-  try {
-    localStorage.setItem('remote_two_finger_swipes', String(twoFingerSwipes));
-  } catch {
-    // Keep the preference for this page.
-  }
+  if (!ready || !gestures.swipes.length) return;
+  if (gestureDrag) releaseGestureDrag();
+  else if (dragLocked || dragPending) enqueue([{ action: 'drag', active: false }]);
+  resetGesture();
+  macSwipeMode = !macSwipeMode;
   updateGestureSettings();
 });
 drawer.querySelector('[data-drawer="close"]').addEventListener('click', () => toggleDrawer(false));
@@ -542,7 +646,22 @@ document.addEventListener('keydown', event => {
   }
 });
 
-function submitText(enter = false) {
+function preserveText(uncertain = true) {
+  const queued = pending.filter(item => item.command.action === 'type').map(item => item.command.text).join('');
+  if (!sendingText && !queued) return;
+  const interrupted = sendingText;
+  kbInput.value = (interrupted || '') + queued + kbInput.value;
+  sendingText = null;
+  textNeedsReview = true;
+  sendTextBtn.hidden = false;
+  typingNotice.hidden = false;
+  typingNotice.textContent = interrupted && uncertain
+    ? 'Check the computer before resending. Some of this text may already be there.'
+    : 'Unsent text is saved here. Tap Send text when ready.';
+}
+
+function submitText(enter = false, confirmed = false) {
+  if (textNeedsReview && !confirmed) return;
   const characters = Array.from(kbInput.value);
   if (characters.length > 1024) {
     showToast('Send up to 1,024 characters at a time.');
@@ -553,8 +672,11 @@ function submitText(enter = false) {
     commands.push({ action: 'type', text: characters.slice(offset, offset + 128).join('') });
   }
   if (enter) commands.push({ action: 'key', name: 'enter' });
-  if (commands.length && enqueue(commands, enter ? 'Enter sent' : '')) {
+  if (commands.length && !enqueue(commands, enter ? 'Enter sent' : '')) return;
+  if (commands.length || confirmed) {
     kbInput.value = '';
+    textNeedsReview = false;
+    sendTextBtn.hidden = typingNotice.hidden = true;
     if (enter) kbInput.blur();
   }
 }
@@ -564,7 +686,7 @@ kbInput.addEventListener('input', event => {
 });
 kbInput.addEventListener('compositionend', () => submitText());
 kbInput.addEventListener('keydown', event => {
-  if (event.isComposing) return;
+  if (event.isComposing || textNeedsReview) return;
   if (event.key === 'Backspace' && !kbInput.value) {
     event.preventDefault();
     sendKey('backspace');
@@ -573,6 +695,7 @@ kbInput.addEventListener('keydown', event => {
     submitText(true);
   }
 });
+sendTextBtn.addEventListener('click', () => submitText(false, true));
 document.getElementById('enterBtn').addEventListener('click', () => submitText(true));
 
 document.addEventListener('visibilitychange', () => {
@@ -676,123 +799,141 @@ function recordTapMovement(touches) {
   }
 }
 
-function recognizeMacSwipe(sample) {
-  if (touchGesture.mode || dragLocked || dragPending) return;
-  const x = sample.x - touchGesture.origin.x;
-  const y = sample.y - touchGesture.origin.y;
-  const horizontal = Math.abs(x) >= 36 && Math.abs(x) > Math.abs(y) * 1.25;
-  const vertical = Math.abs(y) >= 36 && Math.abs(y) > Math.abs(x) * 1.25;
+function recognizeMacSwipe(gesture, count, x, y) {
+  if (gesture.mode || dragLocked || dragPending) return;
+  const horizontal = Math.abs(x) >= 32 && Math.abs(x) > Math.abs(y) * 1.2;
+  const vertical = Math.abs(y) >= 32 && Math.abs(y) > Math.abs(x) * 1.2;
   const swipe = horizontal ? (x < 0 ? 'swipe_left' : 'swipe_right')
     : vertical ? (y < 0 ? 'swipe_up' : 'swipe_down') : null;
-  if (swipe && gestures.swipes.includes(swipe)) {
-    touchGesture.mode = 'swipe';
-    touchGesture.used = true;
-    sendKey(swipe);
+  if (!swipe || !gestures.swipes.includes(swipe)) return;
+  const fingers = gestures.swipe_fingers[swipe] || [3];
+  if (((count === 1 && macSwipeMode) || fingers.includes(count)) &&
+      sendKey(swipe, swipeLabels[swipe].slice(2))) {
+    gesture.mode = 'swipe';
   }
 }
 
 trackpad.addEventListener('touchstart', event => {
   event.preventDefault();
   if (!ready) return;
-  for (const touch of event.changedTouches) {
-    if (trackpad.contains(touch.target) && !scrollStrip.contains(touch.target)) {
-      trackpadContacts.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
-    }
+  const touchesAdded = Array.from(event.changedTouches).filter(touch =>
+    trackpad.contains(touch.target) && !scrollStrip.contains(touch.target));
+  if (!touchesAdded.length) return;
+  if (document.activeElement === kbInput) kbInput.blur();
+  for (const touch of touchesAdded) {
+    trackpadContacts.set(touch.identifier, { x: touch.clientX, y: touch.clientY });
   }
   const touches = activeTrackpadTouches(event);
   if (!touches.length) return;
   const sample = touchSample(touches);
   if (!touchGesture) {
-    touchGesture = { max: 0, started: Date.now(), tapMoved: false, used: false };
+    touchGesture = { max: 0, started: Date.now(), tapMoved: false };
   }
   recordTapMovement(touches);
+  if (touchGesture.mode) {
+    // Once committed, a replaced finger must not restart the same swipe or drag.
+    touchGesture.finished = true;
+    releaseGestureDrag();
+  }
   touchGesture.last = sample;
   touchGesture.max = Math.max(touchGesture.max, sample.count);
   touchGesture.origin = sample;
-  touchGesture.mode = undefined;
-  touchGesture.zoom = 0;
-  if (sample.count > 3) releaseGestureDrag();
   trackpad.classList.add('active-touch');
 }, { passive: false });
 
-trackpad.addEventListener('touchmove', event => {
-  event.preventDefault();
-  if (!ready || !touchGesture) return;
-  const touches = activeTrackpadTouches(event);
-  if (!touches.length) return;
+function updateTouchGesture(touches) {
+  const gesture = touchGesture;
+  if (!ready || !gesture || !touches.length) return;
   recordTapMovement(touches);
-  const sample = touchSample(touches);
-  const previous = touchGesture.last;
-  touchGesture.last = sample;
-  if (sample.count !== previous.count || sample.count !== touchGesture.max) return;
+  if (gesture.finished || touches.length !== gesture.max) return;
 
+  const sample = touchSample(touches);
+  const previous = gesture.last;
+  gesture.last = sample;
   const dx = sample.x - previous.x;
   const dy = sample.y - previous.y;
-  const origin = touchGesture.origin;
-  const panX = sample.x - origin.x;
-  const panY = sample.y - origin.y;
+  const panX = sample.x - gesture.origin.x;
+  const panY = sample.y - gesture.origin.y;
   const pan = Math.hypot(panX, panY);
   if (sample.count === 1) {
-    if (touchGesture.mode === 'move') {
+    if (macSwipeMode) {
+      recognizeMacSwipe(gesture, sample.count, panX, panY);
+    } else if (gesture.mode === 'move') {
       addMovement(dx, dy);
-    } else if (pan >= 7) {
-      touchGesture.mode = 'move';
-      touchGesture.used = true;
+    } else if (pan >= TAP_SLOP) {
+      gesture.mode = 'move';
       addMovement(panX, panY);
     }
-  } else if (sample.count === 2 && swipeModeEnabled()) {
-    recognizeMacSwipe(sample);
   } else if (sample.count === 2) {
-    touchGesture.zoom += Math.log(sample.span / previous.span);
-    if (!touchGesture.mode) {
-      const spread = Math.abs(sample.span - origin.span);
-      if (gestures.pinch_zoom && spread >= 12 && spread > pan * 1.25) {
-        touchGesture.mode = 'pinch';
-        touchGesture.used = true;
-      } else if (gestures.scroll && pan >= 10) {
-        touchGesture.mode = 'scroll';
-        touchGesture.used = true;
+    const spread = sample.span - gesture.origin.span;
+    if (!gesture.mode) {
+      if (gestures.pinch_zoom && Math.abs(spread) >= Math.max(12, gesture.origin.span * 0.08) &&
+          Math.abs(spread) > pan * 1.25) {
+        gesture.mode = 'pinch';
+        gesture.zoomAnchor = sample.span;
+        sendKey(spread > 0 ? 'zoom_in' : 'zoom_out');
+        return;
+      }
+      const scrollPan = gestures.horizontal_scroll ? pan : Math.abs(panY);
+      if (gestures.scroll && scrollPan >= TAP_SLOP) {
+        gesture.mode = 'scroll';
         addScroll(panX * 2.2, panY * 2.2);
         return;
       }
     }
-    if (touchGesture.mode === 'pinch' && Math.abs(touchGesture.zoom) >= 0.16) {
-      sendKey(touchGesture.zoom > 0 ? 'zoom_in' : 'zoom_out');
-      touchGesture.zoom = 0;
-    } else if (touchGesture.mode === 'scroll') {
+    if (gesture.mode === 'pinch') {
+      const zoom = Math.log(sample.span / gesture.zoomAnchor);
+      if (Math.abs(zoom) >= 0.16 && sendKey(zoom > 0 ? 'zoom_in' : 'zoom_out')) {
+        gesture.zoomAnchor = sample.span;
+      }
+    } else if (gesture.mode === 'scroll') {
       addScroll(dx * 2.2, dy * 2.2);
     }
-  } else if (sample.count === 3) {
-    if (gestures.three_finger_drag) {
+  } else if (sample.count === 3 && gestures.three_finger_drag) {
+    if (!gesture.mode && pan >= TAP_SLOP) {
       startGestureDrag();
       if (gestureDrag || dragLocked) {
-        touchGesture.used = true;
-        addMovement(dx, dy);
+        gesture.mode = 'drag';
+        addMovement(panX, panY);
       }
-    } else {
-      recognizeMacSwipe(sample);
+    } else if (gesture.mode === 'drag') {
+      addMovement(dx, dy);
     }
+  } else if (sample.count === 3 || sample.count === 4) {
+    recognizeMacSwipe(gesture, sample.count, panX, panY);
   }
+}
+
+trackpad.addEventListener('touchmove', event => {
+  event.preventDefault();
+  updateTouchGesture(activeTrackpadTouches(event));
 }, { passive: false });
 
 trackpad.addEventListener('touchend', event => {
   event.preventDefault();
   if (!touchGesture) return;
-  recordTapMovement(event.changedTouches);
-  for (const touch of event.changedTouches) trackpadContacts.delete(touch.identifier);
-  const remaining = activeTrackpadTouches(event).length;
-  if (remaining < 3) releaseGestureDrag();
-  if (remaining) return;
+  const remaining = activeTrackpadTouches(event);
+  const ended = Array.from(event.changedTouches).filter(touch => trackpadContacts.has(touch.identifier));
+  // A fast gesture can cross its threshold on the lift, with no final touchmove.
+  updateTouchGesture([...remaining, ...ended]);
+  for (const touch of ended) trackpadContacts.delete(touch.identifier);
+  if (remaining.length < 3) releaseGestureDrag();
+  if (remaining.length) return;
   trackpad.classList.remove('active-touch');
   const touch = touchGesture;
   touchGesture = undefined;
   trackpadContacts.clear();
-  if (!ready || touch.used || touch.tapMoved || Date.now() - touch.started > 420) {
+  if (!ready || touch.mode || touch.tapMoved || Date.now() - touch.started > 420) {
     lastTap = undefined;
     return;
   }
 
-  if (touch.max === 1) {
+  if (touch.max === 1 && !macSwipeMode) {
+    if (dragLocked || dragPending) {
+      enqueue([{ action: 'drag', active: false }]);
+      lastTap = undefined;
+      return;
+    }
     const now = Date.now();
     const { x, y } = touch.last;
     const double = lastTap && now - lastTap.time < 300 && Math.hypot(x - lastTap.x, y - lastTap.y) < 24;
@@ -829,6 +970,10 @@ trackpad.addEventListener('pointermove', event => {
   }
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
+  if (macSwipeMode) {
+    if (pointer.button === 0) recognizeMacSwipe(pointer, 1, dx, dy);
+    return;
+  }
   if (dx === 0 && dy === 0) return;
   if (pointer.button === 0 && !pointer.moved && Math.hypot(dx, dy) < 4) return;
   pointer.x = event.clientX;
@@ -842,7 +987,9 @@ trackpad.addEventListener('pointermove', event => {
 
 trackpad.addEventListener('pointerup', event => {
   if (event.pointerType === 'touch' || pointer?.id !== event.pointerId) return;
-  if (!pointer.moved && !dragLocked && pointer.button !== undefined) {
+  if (macSwipeMode && pointer.button === 0) {
+    recognizeMacSwipe(pointer, 1, event.clientX - pointer.x, event.clientY - pointer.y);
+  } else if (!pointer.moved && !dragLocked && pointer.button !== undefined) {
     sendClick(pointer.button === 2 ? 'right' : 'left');
   }
   releaseGestureDrag();

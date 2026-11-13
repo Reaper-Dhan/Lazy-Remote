@@ -41,16 +41,17 @@ IDLE_LIFETIME = 5 * 60
 SERVER_IDLE_TIMEOUT = 30 * 60
 SERVER_IDLE_MESSAGE = "Server stopped after 30 minutes without phone activity."
 SESSION_LIFETIME = 12 * 60 * 60
+PRESENCE_LIFETIME = 15
+TAB_HEADER = "X-Lazy-Remote-Tab"
 DRAG_LIFETIME = 15
 MAX_BODY = 4096
 CONNECTION_TIMEOUT = 5
 MAX_DELTA = 16384
 MOTION_POSITION_LIMIT = 2 ** 32
-SHARE_LIFETIME = 120  # seconds the phone certificate is offered over plain HTTP
-SHARE_DOWNLOADS = 2
 DEFAULT_GESTURES = {
     "tap": True, "secondary_tap": True, "scroll": True, "horizontal_scroll": True,
-    "natural_scroll": True, "pinch_zoom": False, "three_finger_drag": False, "swipes": {},
+    "natural_scroll": True, "pinch_zoom": False, "three_finger_drag": False,
+    "swipes": {}, "swipe_fingers": {},
 }
 # A leftward swipe reveals the Space to the right, and vice versa.
 SWIPE_SHORTCUTS = {
@@ -70,10 +71,21 @@ KEYS = set("""
 ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/remote.js": ("remote.js", "text/javascript; charset=utf-8"),
+    "/pwa.js": ("pwa.js", "text/javascript; charset=utf-8"),
+    "/qr-scan.js": ("qr-scan.js", "text/javascript; charset=utf-8"),
+    "/vendor/jsQR.js": ("vendor/jsQR.js", "text/javascript; charset=utf-8"),
+    "/service-worker.js": ("service-worker.js", "text/javascript; charset=utf-8"),
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json"),
+    "/offline.html": ("offline.html", "text/html; charset=utf-8"),
+    "/assets/app-icon-192.png": ("assets/app-icon-192.png", "image/png"),
+    "/assets/app-icon-512.png": ("assets/app-icon-512.png", "image/png"),
     "/remote.css": ("remote.css", "text/css; charset=utf-8"),
     "/assets/logo.svg": ("assets/logo.svg", "image/svg+xml"),
     "/assets/touch-icon.png": ("assets/touch-icon.png", "image/png"),
+    "/apple-touch-icon.png": ("assets/apple-touch-icon.png", "image/png"),
+    "/apple-touch-icon-precomposed.png": ("assets/apple-touch-icon.png", "image/png"),
 }
+PUBLIC_ICONS = frozenset(route for route, (_, mime) in ASSETS.items() if mime.startswith("image/"))
 
 
 def mac_preferences(domain):
@@ -86,12 +98,18 @@ def mac_preferences(domain):
         return {}
 
 
-def three_finger_shortcuts(settings, hotkeys):
-    if settings.get("TrackpadThreeFingerDrag") or not isinstance(hotkeys, dict):
-        return {}
+def mac_swipe_shortcuts(settings, hotkeys):
+    if not isinstance(hotkeys, dict):
+        return {}, {}
     shortcuts = {}
+    swipe_fingers = {}
     for name, (identifier, default_key, axis) in SWIPE_SHORTCUTS.items():
-        if settings.get(f"TrackpadThreeFinger{axis}SwipeGesture") != 2:
+        fingers = []
+        if not settings.get("TrackpadThreeFingerDrag") and settings.get(f"TrackpadThreeFinger{axis}SwipeGesture") == 2:
+            fingers.append(3)
+        if settings.get(f"TrackpadFourFinger{axis}SwipeGesture") == 2:
+            fingers.append(4)
+        if not fingers:
             continue
         entry = hotkeys.get(identifier, {})
         if not isinstance(entry, dict) or not entry.get("enabled", True):
@@ -106,7 +124,8 @@ def three_finger_shortcuts(settings, hotkeys):
         if (type(key_code) is int and 0 <= key_code <= 127 and
                 type(flags) is int and flags >= 0 and flags & ~KEYBOARD_FLAGS == 0):
             shortcuts[name] = {"key_code": key_code, "flags": flags}
-    return shortcuts
+            swipe_fingers[name] = fingers
+    return shortcuts, swipe_fingers
 
 
 def mac_gesture_settings():
@@ -114,6 +133,7 @@ def mac_gesture_settings():
         "com.apple.driver.AppleBluetoothMultitouch.trackpad"
     )
     hotkeys = mac_preferences("com.apple.symbolichotkeys").get("AppleSymbolicHotKeys", {})
+    shortcuts, swipe_fingers = mac_swipe_shortcuts(settings, hotkeys)
     try:
         direction = subprocess.check_output(
             ["/usr/bin/defaults", "read", "-g", "com.apple.swipescrolldirection"],
@@ -130,7 +150,8 @@ def mac_gesture_settings():
         "natural_scroll": direction not in ("0", "false", "no"),
         "pinch_zoom": bool(settings.get("TrackpadPinch", DEFAULT_GESTURES["pinch_zoom"])),
         "three_finger_drag": bool(settings.get("TrackpadThreeFingerDrag", DEFAULT_GESTURES["three_finger_drag"])),
-        "swipes": three_finger_shortcuts(settings, hotkeys),
+        "swipes": shortcuts,
+        "swipe_fingers": swipe_fingers,
     }
 
 
@@ -145,9 +166,8 @@ def valid_command(command):
             if type(value) not in (int, float) or not -limit <= value <= limit:
                 return False
         if action == "motion":
-            stream, seq = command.get("stream"), command.get("seq")
-            return (command.keys() == {"action", "dx", "dy", "stream", "seq"} and
-                    isinstance(stream, str) and re.fullmatch(r"[0-9a-f]{32}", stream) is not None and
+            seq = command.get("seq")
+            return (command.keys() == {"action", "dx", "dy", "seq"} and
                     type(seq) is int and 1 <= seq <= 2 ** 32)
         return command.keys() == {"action", "dx", "dy"}
     if action == "click":
@@ -228,16 +248,22 @@ class InputBridge:
 
 
 class Remote:
-    def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None, stop_when_idle=True):
+    def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None,
+                 stop_when_idle=True, protect_background=True):
         self.bridge = bridge
         self.pairing = Pairing(browser_path)
         self.on_change = on_change
         self.gesture_reader = gesture_reader
         self.stop_when_idle = stop_when_idle
         self.gestures = gesture_reader() if gesture_reader else DEFAULT_GESTURES
-        self.motion_streams = {}
+        self.protect_background = protect_background
+        self.motion = (0, 0, 0)
         self.lock = threading.Lock()
-        self.token = None
+        self.input_lock = threading.Lock()
+        self.input_ready = None
+        self.token = self.tab = None
+        self.last_presence = 0
+        self.drag_release_pending = False
         self.session_until = self.last_command = 0
         self.last_phone_activity = time.monotonic()
         self.drag_until = 0
@@ -247,14 +273,32 @@ class Remote:
     def release_drag(self):
         if self.drag_until:
             self.drag_until = 0
+            self.drag_release_pending = True
+
+    def flush_drag_release(self):
+        # Revoking a session must not wait for a slow or blocked native input call.
+        if self.input_lock.acquire(blocking=False):
             try:
-                self.bridge.send({"action": "drag", "active": False})
-            except RequestError:
-                pass
+                self._flush_drag_release()
+            finally:
+                self.input_lock.release()
+
+    def _flush_drag_release(self):
+        with self.lock:
+            pending, self.drag_release_pending = self.drag_release_pending, False
+        if not pending:
+            return
+        try:
+            released = self.bridge.send({"action": "drag", "active": False})
+        except RequestError:
+            released = False
+        if not released:
+            with self.lock:
+                self.drag_release_pending = True
 
     def revoke(self):
-        self.token = None
-        self.motion_streams.clear()
+        self.token = self.tab = None
+        self.motion = (0, 0, 0)
         self.release_drag()
 
     def snapshot(self):
@@ -283,17 +327,21 @@ class Remote:
             self.pairing.generate(now)
             if publish:
                 self.publish()
-            return self.pairing.code
+            code = self.pairing.code
+        self.flush_drag_release()
+        return code
 
     def start_session(self, now):
         self.revoke()
         self.token = secrets.token_urlsafe(32)
+        self.tab = secrets.token_urlsafe(32)
+        self.last_presence = now
         self.session_until = now + SESSION_LIFETIME
         self.last_command = self.last_phone_activity = now
         self.command_budget = 120
         self.budget_updated = now
         self.publish()
-        return self.token
+        return self.token, self.tab
 
     def request_access(self, body=None, device=None):
         with self.lock:
@@ -317,7 +365,8 @@ class Remote:
             now = time.monotonic()
             self.expire(now)
             device = self.pairing.claim(pending)
-            return self.start_session(now), device
+            token, tab = self.start_session(now)
+            return token, tab, device
 
     def expire(self, now):
         if self.stop_when_idle and now - self.last_phone_activity >= SERVER_IDLE_TIMEOUT:
@@ -326,7 +375,8 @@ class Remote:
             self.revoke()
             raise RequestError(503, SERVER_IDLE_MESSAGE)
         changed = self.pairing.expire(now)
-        if self.token and (now >= self.session_until or now - self.last_command >= IDLE_LIFETIME):
+        if self.token and (now >= self.session_until or now - self.last_command >= IDLE_LIFETIME
+                           or self.protect_background and now - self.last_presence >= PRESENCE_LIFETIME):
             self.revoke()
             if not self.pairing.browser.active():
                 self.pairing.generate(now)
@@ -336,15 +386,17 @@ class Remote:
         if self.drag_until and now >= self.drag_until:
             self.release_drag()
 
-    def require_session(self, token, now):
+    def require_session(self, token, tab, now):
         self.expire(now)
-        if not token or self.token is None or not hmac.compare_digest(token, self.token):
+        if (not token or not tab or self.token is None
+                or not hmac.compare_digest(token, self.token) or not hmac.compare_digest(tab, self.tab)):
             raise RequestError(401, "Request access to control the computer.")
 
-    def status(self, token, device, pending_token):
+    def status(self, token, tab, device, pending_token):
         with self.lock:
+            now = time.monotonic()
             try:
-                self.require_session(token, time.monotonic())
+                self.require_session(token, tab, now)
             except RequestError as error:
                 if error.status != 401:
                     raise
@@ -354,33 +406,53 @@ class Remote:
                     "match": pending.match if pending else None,
                     "approved": bool(pending and pending.approved),
                 }
-            ready = self.bridge.send({"action": "check_perm"})
+            self.last_presence = now
+        ready = self.input_permission(wait=False)
+        with self.lock:
+            self.require_session(token, tab, time.monotonic())
             gestures = {**self.gestures, "swipes": list(self.gestures["swipes"])}
             return 200, {
                 "ready": ready, "dragging": bool(self.drag_until), "gestures": gestures,
+                "protect_background": self.protect_background,
                 "unavailable": list(getattr(self.bridge, "unavailable_keys", ())),
             }
 
-    def input_permission(self, request=False):
-        with self.lock:
-            try:
-                return self.bridge.send({"action": "request_perm" if request else "check_perm"})
-            except RequestError:
-                return None
+    def input_permission(self, request=False, wait=True):
+        if not self.input_lock.acquire(blocking=wait):
+            return self.input_ready
+        try:
+            self._flush_drag_release()
+            self.input_ready = self.bridge.send({"action": "request_perm" if request else "check_perm"})
+        except RequestError:
+            self.input_ready = None
+        finally:
+            self.input_lock.release()
+        return self.input_ready
 
-    def disconnect(self, token):
+    def disconnect(self, token, tab):
         with self.lock:
             now = time.monotonic()
-            self.require_session(token, now)
+            self.require_session(token, tab, now)
             self.revoke()
             if not self.pairing.browser.active():
                 self.pairing.generate(now)
             self.publish()
+        self.flush_drag_release()
 
-    def command(self, token, command):
+    def command(self, token, tab, command):
+        # Reject unauthenticated requests before they can wait on the native input queue.
+        with self.lock:
+            self.require_session(token, tab, time.monotonic())
+        with self.input_lock:
+            try:
+                return self._command(token, tab, command)
+            finally:
+                self._flush_drag_release()
+
+    def _command(self, token, tab, command):
         with self.lock:
             now = time.monotonic()
-            self.require_session(token, now)
+            self.require_session(token, tab, now)
             if not valid_command(command):
                 raise RequestError(400, "Invalid remote command.")
             self.command_budget = min(120, self.command_budget + 90 * (now - self.budget_updated))
@@ -389,15 +461,13 @@ class Remote:
             if self.command_budget < cost:
                 raise RequestError(429, "The remote is busy. Try again.")
             self.command_budget -= cost
-            stream = None
+            motion = None
             if command["action"] == "motion":
-                stream = command["stream"]
-                if stream not in self.motion_streams and len(self.motion_streams) >= 32:
-                    raise RequestError(409, "Lock the remote and reconnect to start a new trackpad stream.")
                 seq, x, y = command["seq"], command["dx"], command["dy"]
-                previous_seq, previous_x, previous_y = self.motion_streams.get(stream, (0, 0, 0))
+                previous_seq, previous_x, previous_y = self.motion
                 if seq <= previous_seq:
                     return {"ok": True, "dragging": bool(self.drag_until)}
+                motion = (seq, x, y)
                 command = {
                     "action": "move",
                     "dx": max(-MAX_DELTA, min(MAX_DELTA, x - previous_x)),
@@ -406,16 +476,31 @@ class Remote:
             elif command["action"] == "key" and command["name"] in SWIPE_SHORTCUTS:
                 shortcut = self.gestures["swipes"].get(command["name"])
                 if shortcut is None:
-                    raise RequestError(400, "That three-finger swipe is disabled on the Mac.")
-                command = {"action": "shortcut", **shortcut}
+                    raise RequestError(400, "That swipe or its keyboard shortcut is disabled on the Mac.")
+                command = {"action": "shortcut", "name": command["name"], **shortcut}
             if command["action"] == "click":
                 self.release_drag()
-            if not self.bridge.send(command):
+
+        self._flush_drag_release()
+        with self.lock:
+            self.require_session(token, tab, time.monotonic())
+        try:
+            delivered = self.bridge.send(command)
+        except RequestError:
+            with self.lock:
+                self.release_drag()
+            raise
+        with self.lock:
+            if token != self.token:
+                if delivered and command == {"action": "drag", "active": True}:
+                    self.drag_release_pending = True
+                raise RequestError(401, "Access was locked while the command was in progress.")
+            if not delivered:
                 self.release_drag()
                 raise RequestError(503, PERMISSION_MESSAGE)
-            if stream is not None:
-                self.motion_streams[stream] = (seq, x, y)
-            self.last_command = self.last_phone_activity = time.monotonic()
+            if motion is not None:
+                self.motion = motion
+            self.last_command = self.last_phone_activity = self.last_presence = time.monotonic()
             if command["action"] == "drag":
                 self.drag_until = self.last_command + DRAG_LIFETIME if command["active"] else 0
             elif command["action"] == "move" and self.drag_until:
@@ -434,140 +519,17 @@ class Remote:
                     if self.on_change:
                         self.on_change("notice", message=str(error))
                     return
+                monitor_drag = self.drag_until and getattr(self.bridge, "monitor_drag", False)
+            self.flush_drag_release()
+            if monitor_drag and self.input_permission(wait=False) is False:
+                with self.lock:
+                    self.release_drag()
+                self.flush_drag_release()
             if self.gesture_reader and now >= next_gesture_check:
                 gestures = self.gesture_reader()
                 with self.lock:
                     self.gestures = gestures
                 next_gesture_check = time.monotonic() + 10
-
-
-class CertificateShare:
-    """Serves the public phone certificate over plain HTTP for a short time.
-
-    The phone cannot use HTTPS before it trusts this computer, so the files go
-    out unencrypted: someone else on the network could swap them. The page and
-    the launcher both show the root fingerprint so the user can compare them,
-    and the share ends after SHARE_LIFETIME seconds or SHARE_DOWNLOADS files.
-    """
-
-    FILES = {
-        "Lazy-Remote.mobileconfig": ("mobileconfig", "application/x-apple-aspen-config"),
-        "Lazy-Remote-Root.cer": ("cer", "application/x-x509-ca-cert"),
-    }
-
-    def __init__(self, address, directory, fingerprint, on_change=None):
-        self.address, self.directory, self.fingerprint = address, Path(directory), fingerprint
-        self.on_change = on_change
-        self.server = None
-        self.lock = threading.Lock()
-
-    def file(self, extension):
-        return next((path for path in self.directory.iterdir() if path.suffix == "." + extension), None)
-
-    def start(self):
-        with self.lock:
-            self._stop_locked(publish=False)
-            token = secrets.token_urlsafe(16)
-            share = self
-
-            class Handler(BaseHTTPRequestHandler):
-                server_version = "LazyRemote"
-                sys_version = ""
-
-                def log_message(self, *_):
-                    pass
-
-                def do_GET(self):
-                    prefix = f"/{token}/"
-                    if not self.path.startswith(prefix):
-                        self.send_error(404)
-                        return
-                    name = self.path[len(prefix):]
-                    if name == "":
-                        body, kind = share.page(), "text/html; charset=utf-8"
-                    elif name in share.FILES:
-                        extension, kind = share.FILES[name]
-                        path = share.file(extension)
-                        if path is None:
-                            self.send_error(404)
-                            return
-                        body = path.read_bytes()
-                    else:
-                        self.send_error(404)
-                        return
-                    self.send_response(200)
-                    self.send_header("Content-Type", kind)
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("X-Content-Type-Options", "nosniff")
-                    self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
-                    if name:
-                        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
-                    self.end_headers()
-                    self.wfile.write(body)
-                    if name:
-                        share.downloaded()
-
-            server = ThreadingHTTPServer((self.address, 0), Handler)
-            server.timeout = 0.5
-            server.until = time.monotonic() + SHARE_LIFETIME
-            server.downloads = 0
-            self.server = server
-            threading.Thread(target=self._serve, args=(server,), daemon=True).start()
-            url = f"http://{self.address}:{server.server_address[1]}/{token}/"
-        self._publish("certificate_share", url=url, seconds=SHARE_LIFETIME, fingerprint=self.fingerprint)
-        return url
-
-    def page(self):
-        return (
-            "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>Lazy Remote certificate</title>"
-            "<body style='font:17px -apple-system,system-ui,sans-serif;margin:24px;line-height:1.45'>"
-            "<h1 style='font-size:22px'>Trust this computer</h1>"
-            "<p><a href='Lazy-Remote.mobileconfig'>iPhone or iPad profile</a><br>"
-            "<a href='Lazy-Remote-Root.cer'>Android certificate</a></p>"
-            "<p>Check that this fingerprint matches the one on the computer before you install:</p>"
-            f"<p style='font:13px ui-monospace,monospace;word-break:break-all'>{self.fingerprint}</p>"
-            "<p>iPhone: then open Settings → Profile Downloaded → Install, and turn on "
-            "Lazy Remote Local Root in Settings → General → About → Certificate Trust Settings.</p>"
-            "<p>Android: open Settings, search for “CA certificate”, and install the downloaded file.</p>"
-        ).encode("utf-8")
-
-    def downloaded(self):
-        with self.lock:
-            if self.server is None:
-                return
-            self.server.downloads += 1
-            if self.server.downloads >= SHARE_DOWNLOADS:
-                self.server.until = 0
-
-    def _serve(self, server):
-        while time.monotonic() < server.until and self.server is server:
-            server.handle_request()
-        with self.lock:
-            if self.server is server:
-                self.server = None
-                ended = True
-            else:
-                ended = False
-        server.server_close()
-        if ended:
-            self._publish("certificate_share_ended")
-
-    def stop(self):
-        with self.lock:
-            self._stop_locked(publish=True)
-
-    def _stop_locked(self, publish):
-        if self.server is not None:
-            self.server.until = 0
-            self.server = None
-            if publish:
-                threading.Thread(target=self._publish, args=("certificate_share_ended",), daemon=True).start()
-
-    def _publish(self, event, **data):
-        if self.on_change:
-            self.on_change(event, **data)
 
 
 class RemoteServer(ThreadingHTTPServer):
@@ -619,15 +581,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def end_headers(self):
-        self.send_header("Cache-Control", "no-store")
+        public_icon = self.path in PUBLIC_ICONS
+        self.send_header("Cache-Control", "public, max-age=86400" if public_icon else "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "cross-origin" if public_icon else "same-origin")
+        self.send_header("Permissions-Policy", "camera=(self), microphone=()")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
-            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; "
+            "media-src 'self' blob:; connect-src 'self'; "
+            "manifest-src 'self'; worker-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
         )
         super().end_headers()
 
@@ -645,7 +610,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def json_reply(self, status, body, cookies=()):
         self.reply(status, json.dumps(body).encode("utf-8"), cookies=cookies)
@@ -666,6 +632,10 @@ class Handler(BaseHTTPRequestHandler):
         if value is not None and re.fullmatch(r"[A-Za-z0-9_-]{43}", value.value):
             return value.value
         return None
+
+    def tab(self):
+        values = self.headers.get_all(TAB_HEADER, [])
+        return values[0] if len(values) == 1 and re.fullmatch(r"[A-Za-z0-9_-]{43}", values[0]) else None
 
     def json_body(self):
         if self.headers.get_all("Transfer-Encoding"):
@@ -698,13 +668,22 @@ class Handler(BaseHTTPRequestHandler):
                 content, content_type = self.server.assets[path]
                 self.reply(200, content, content_type)
             elif path == "/api/status":
-                self.json_reply(*self.server.remote.status(
-                    self.token(), self.token(DEVICE_COOKIE), self.token(APPROVAL_COOKIE)
-                ))
+                status, body = self.server.remote.status(
+                    self.token(), self.tab(), self.token(DEVICE_COOKIE), self.token(APPROVAL_COOKIE)
+                )
+                if status == 401:
+                    body["pairing_origins"] = [f"https://{host}" for host in sorted(self.server.hosts)]
+                self.json_reply(status, body)
             else:
                 raise RequestError(404, "Page not found.")
         except RequestError as error:
             self.json_reply(error.status, {"error": str(error)})
+
+    def do_HEAD(self):
+        if self.path in self.server.assets or self.path == "/index.html":
+            self.do_GET()
+        else:
+            self.json_reply(404, {"error": "Page not found."})
 
     def do_POST(self):
         try:
@@ -716,7 +695,7 @@ class Handler(BaseHTTPRequestHandler):
             remote = self.server.remote
             body = self.json_body()
             if self.path == "/api/cmd":
-                self.json_reply(200, remote.command(self.token(), body))
+                self.json_reply(200, remote.command(self.token(), self.tab(), body))
                 return
             if self.path != "/api/pair" and body:
                 raise RequestError(400, "Expected an empty JSON object.")
@@ -725,13 +704,14 @@ class Handler(BaseHTTPRequestHandler):
                            else remote.request_access(device=self.token(DEVICE_COOKIE)))
                 self.json_reply(202, {"ok": True}, cookies=((APPROVAL_COOKIE, pending, APPROVAL_LIFETIME),))
             elif self.path == "/api/claim":
-                token, device = remote.claim(self.token(APPROVAL_COOKIE))
+                token, tab, device = remote.claim(self.token(APPROVAL_COOKIE))
                 cookies = [(COOKIE, token, None), (APPROVAL_COOKIE, "", APPROVAL_LIFETIME)]
                 if device is not None:
                     cookies.append((DEVICE_COOKIE, device, DEVICE_LIFETIME))
-                self.json_reply(200, {"ok": True}, cookies=cookies)
+                self.json_reply(200, {"ok": True, "tab": tab, "protect_background": remote.protect_background},
+                                cookies=cookies)
             else:
-                remote.disconnect(self.token())
+                remote.disconnect(self.token(), self.tab())
                 self.json_reply(200, {"ok": True})
         except RequestError as error:
             self.json_reply(error.status, {"error": str(error)})
@@ -747,17 +727,12 @@ def launcher_event(event, **data):
 def terminal_event(event, **data):
     if event == "notice":
         print(data["message"], flush=True)
-    elif event == "certificate_share":
-        print(f"Open {data['url']} on your phone within {data['seconds']} seconds to get the certificate.\n"
-              f"Check that it shows this fingerprint: {data['fingerprint']}", flush=True)
-    elif event == "certificate_share_ended":
-        print("Stopped offering the certificate.", flush=True)
     elif data["match"] and not data["approved"]:
         print(f"Phone requests access. Compare {data['match']} on both screens, "
               f"then type approve {data['match']} or deny {data['match']}.", flush=True)
 
 
-def local_controls(remote, stop, launcher, share=None):
+def local_controls(remote, stop, launcher):
     for line in sys.stdin:
         if stop.is_set():
             return
@@ -767,11 +742,9 @@ def local_controls(remote, stop, launcher, share=None):
             if decision:
                 remote.decide(decision[2], decision[1] == "approve")
             elif launcher and command in ("check_access", "request_input_access"):
-                launcher_event("permission", input_ready=remote.input_permission(request=command == "request_input_access"))
-            elif share is not None and command == "share_certificate":
-                share.start()
-            elif share is not None and command == "stop_certificate_share":
-                share.stop()
+                launcher_event("permission", input_ready=remote.input_permission(
+                    request=command == "request_input_access", wait=False
+                ))
             elif command in ("new_code", "forget") or (not launcher and not command):
                 code = remote.new_code(forget=command != "new_code")
                 if not launcher:
@@ -797,13 +770,18 @@ class LocalInput:
 
     def __init__(self, backend):
         self.backend = backend
+        self.monitor_drag = getattr(backend, "monitor_drag", False)
         # Remote keys this computer cannot send, so the phone can hide their buttons.
         self.unavailable_keys = sorted(backend.unavailable_keys())
 
     def send(self, command):
         try:
             return self.backend.send(command)
-        except (OSError, ValueError):
+        except OSError:
+            if self.monitor_drag:
+                self.backend.close(release=False)
+            raise RequestError(503, PERMISSION_MESSAGE) from None
+        except ValueError:
             raise RequestError(503, f"The {HOST_NAME} input helper is unavailable. Try again.") from None
 
     def close(self):
@@ -815,20 +793,24 @@ def main():
     parser.add_argument("--renew-certificate", action="store_true", help="Replace this computer's HTTPS identity.")
     parser.add_argument("--keep-running", action="store_true",
                         help="Do not stop after 30 minutes without phone activity. The phone still locks after 5.")
+    parser.add_argument("--allow-background-resume", action="store_true",
+                        help="Keep an approved tab usable when it returns to the foreground.")
+    parser.add_argument("--state-dir", type=Path, default=STATE_DIR, help=argparse.SUPPRESS)
     parser.add_argument("--launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         sys.exit("Start Lazy Remote from your user account without sudo.")
-    server = bridge = worker = instance = share = None
+    server = bridge = worker = instance = None
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
         port = int(os.environ.get("REMOTE_PORT", "8765"))
-        if not 1 <= port <= 65535:
-            raise ValueError("REMOTE_PORT must be between 1 and 65535.")
+        if not 0 <= port <= 65535:
+            raise ValueError("REMOTE_PORT must be between 0 and 65535.")
         address, hostname = local_endpoints()
         server = RemoteServer((address, port))
-        state = private_state_dir(STATE_DIR)
+        port = server.server_address[1]
+        state = private_state_dir(args.state_dir)
         instance = (state / "instance.lock").open("a")
         try:
             lock_file(instance, blocking=False)
@@ -836,19 +818,19 @@ def main():
             raise RuntimeError("Lazy Remote is already running. Stop the other instance first.") from None
         context, directory, names, fingerprint = tls_identity(address, hostname, args.renew_certificate, state)
         server.configure_tls(context, names)
-        share = CertificateShare(address, directory, fingerprint,
-                                 on_change=launcher_event if args.launcher else terminal_event)
         bridge = open_input(args.launcher)
         remote = server.remote = Remote(
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
             gesture_reader=mac_gesture_settings if IS_MAC else None, stop_when_idle=not args.keep_running,
+            protect_background=not args.allow_background_resume,
         )
         code = remote.new_code(publish=False)
-        urls = [f"https://{host}/" for host in sorted(server.hosts, key=lambda host: ".local" not in host)]
+        urls = [f"https://{name}{f':{port}' if port != 443 else ''}/" for name in names]
+        phone_files = directory / "phone"
         loopback = address == "127.0.0.1"
         if args.launcher:
             launcher_event(
-                "ready", urls=urls, certificates=str(directory), fingerprint=fingerprint, loopback=loopback,
+                "ready", urls=urls, certificates=str(phone_files), fingerprint=fingerprint, loopback=loopback,
                 input_ready=remote.input_permission(), **remote.snapshot()
             )
         else:
@@ -857,16 +839,15 @@ def main():
                 print(f"  {url}")
             if loopback:
                 print(f"No private network address found. This launch is available on the {HOST_NAME} only.")
-            print(f"Transfer the trust profile to your phone from this folder:\n  {directory}")
+            print(f"Transfer the trust profile to your phone from this folder:\n  {phone_files}")
             print(f"Local root SHA-256 fingerprint: {fingerprint}")
             print(f"Pairing code (one use, 10 minutes)  {code}", flush=True)
             if sys.stdin.isatty():
-                print("Press Enter to forget the browser and get a new code. Type share_certificate to offer\n"
-                      "the phone certificate over Wi-Fi for 2 minutes. Press Ctrl+C to stop.", flush=True)
+                print("Press Enter to forget the browser and get a new code, or Ctrl+C to stop.", flush=True)
         worker = threading.Thread(target=remote.maintain, args=(stop,), daemon=True)
         worker.start()
         if args.launcher or sys.stdin.isatty():
-            threading.Thread(target=local_controls, args=(remote, stop, args.launcher, share), daemon=True).start()
+            threading.Thread(target=local_controls, args=(remote, stop, args.launcher), daemon=True).start()
         server.timeout = 0.5
         while not stop.is_set():
             server.handle_request()
@@ -880,16 +861,19 @@ def main():
         stop.set()
         if server:
             server.server_close()
-        if worker:
-            worker.join()
         if server and server.remote:
             with server.remote.lock:
                 server.remote.pairing.clear_codes()
                 server.remote.revoke()
-        if share:
-            share.stop()
+        if worker:
+            worker.join()
         if bridge:
-            bridge.close()
+            if server and server.remote:
+                with server.remote.input_lock:
+                    server.remote._flush_drag_release()
+                    bridge.close()
+            else:
+                bridge.close()
         if instance:
             instance.close()
 

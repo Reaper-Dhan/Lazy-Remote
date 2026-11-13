@@ -21,6 +21,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 DATA = [
     ("index.html", "."), ("remote.js", "."), ("remote.css", "."),
+    ("pwa.js", "."), ("qr-scan.js", "."), ("service-worker.js", "."), ("manifest.webmanifest", "."), ("offline.html", "."),
+    ("vendor/jsQR.js", "vendor"), ("vendor/jsQR-LICENSE.txt", "vendor"),
+    ("assets/apple-touch-icon.png", "assets"),
+    ("assets/app-icon-192.png", "assets"), ("assets/app-icon-512.png", "assets"),
     ("assets/logo.svg", "assets"), ("assets/touch-icon.png", "assets"),
 ]
 
@@ -77,6 +81,7 @@ def main():
     subprocess.run(command, check=True, cwd=ROOT)
 
     folder = work / "dist" / name
+    shutil.copy2(ROOT / "LICENSE", folder / "LICENSE.txt")
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
     if windows:
@@ -89,7 +94,7 @@ def main():
         (folder / name).chmod(0o755)
         with tarfile.open(archive, "w:gz") as bundle:
             bundle.add(folder, name)
-    shutil.rmtree(ROOT / "build", ignore_errors=True)
+    shutil.rmtree(work, ignore_errors=True)
     print(f"Packed {archive}")
 
 

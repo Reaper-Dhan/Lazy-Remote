@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import Carbon
 
 // Disable stdout buffering
 setbuf(stdout, nil)
@@ -109,6 +110,60 @@ func sendKey(keyCode: CGKeyCode, flags: CGEventFlags = []) {
     up?.post(tap: .cghidEventTap)
 }
 
+func shortcutEvents(keyCode: CGKeyCode, flags: CGEventFlags, held: CGEventFlags) -> [CGEvent]? {
+    let source = CGEventSource(stateID: .privateState)
+    let modifiers: [(CGEventFlags, CGKeyCode, UInt64)] = [
+        (.maskControl, CGKeyCode(kVK_Control), 0x01),
+        (.maskShift, CGKeyCode(kVK_Shift), 0x02),
+        (.maskAlternate, CGKeyCode(kVK_Option), 0x20),
+        (.maskCommand, CGKeyCode(kVK_Command), 0x08),
+        (.maskSecondaryFn, CGKeyCode(kVK_Function), 0),
+    ]
+    let pressed = modifiers.filter { flags.contains($0.0) && !held.contains($0.0) }
+    var events: [CGEvent] = []
+    var current = held
+
+    func append(_ code: CGKeyCode, _ type: CGEventType, _ flags: CGEventFlags) -> Bool {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: type != .keyUp)
+        else { return false }
+        event.type = type
+        event.flags = flags
+        events.append(event)
+        return true
+    }
+
+    for (mask, code, side) in pressed {
+        current.formUnion([mask, CGEventFlags(rawValue: side)])
+        guard append(code, .flagsChanged, current) else { return nil }
+    }
+    let sideFlags = pressed.reduce(UInt64(0)) { $0 | $1.2 }
+    let chord = flags.union(CGEventFlags(rawValue: sideFlags))
+    guard append(keyCode, .keyDown, chord), append(keyCode, .keyUp, chord) else { return nil }
+    for (mask, code, side) in pressed.reversed() {
+        current.subtract([mask, CGEventFlags(rawValue: side)])
+        guard append(code, .flagsChanged, current) else { return nil }
+    }
+    return events
+}
+
+func sendMacShortcut(name: String, keyCode: CGKeyCode, flags: CGEventFlags) -> Bool {
+    // The default Mission Control action has a public system app entry point.
+    // A customized keyboard binding still goes through the user's key chord.
+    if name == "swipe_up", keyCode == CGKeyCode(kVK_UpArrow), flags == .maskControl {
+        let missionControl = URL(fileURLWithPath: "/System/Applications/Mission Control.app", isDirectory: true)
+        if FileManager.default.fileExists(atPath: missionControl.path), NSWorkspace.shared.open(missionControl) {
+            return true
+        }
+    }
+    let held = CGEventSource.flagsState(.hidSystemState)
+    guard let events = shortcutEvents(keyCode: keyCode, flags: flags, held: held) else { return false }
+    for event in events {
+        event.post(tap: .cghidEventTap)
+        usleep(8000)
+    }
+    return true
+}
+
 func typeUnicodeString(_ text: String) {
     let source = CGEventSource(stateID: .hidSystemState)
     for char in text {
@@ -177,7 +232,7 @@ let keyMap: [String: (CGKeyCode, CGEventFlags)] = [
     "new_tab": (17, [.maskCommand]),                 // Cmd + T
     "refresh": (15, [.maskCommand]),                 // Cmd + R
     "fullscreen_mac": (3, [.maskCommand, .maskControl]), // Ctrl + Cmd + F
-    "next_video": (47, [.maskShift]),                // Shift + N (YouTube / Anime player next)
+    "next_video": (45, [.maskShift]),                // Shift + N (YouTube / Anime player next)
     "prev_video": (35, [.maskShift]),                // Shift + P (YouTube / Anime player prev)
     "skip_intro": (49, [.maskShift]),                // Shift + Right or custom
     "cmd_left": (123, [.maskCommand]),               // Browser Back
@@ -239,8 +294,11 @@ while let line = readLine() {
         let dy = Int32((json["dy"] as? NSNumber)?.intValue ?? 0)
         scrollMouse(dx: dx, dy: dy)
     case "shortcut":
-        if let code = json["key_code"] as? UInt16, let flags = json["flags"] as? UInt64 {
-            sendKey(keyCode: code, flags: CGEventFlags(rawValue: flags))
+        guard let name = json["name"] as? String,
+              let code = json["key_code"] as? UInt16, let flags = json["flags"] as? UInt64,
+              sendMacShortcut(name: name, keyCode: code, flags: CGEventFlags(rawValue: flags)) else {
+            print("invalid")
+            continue
         }
     case "key":
         if let name = json["name"] as? String {
