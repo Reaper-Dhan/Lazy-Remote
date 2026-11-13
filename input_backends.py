@@ -84,13 +84,21 @@ class InputBackend:
     def press(self, modifiers, name):
         if self.supported_keys is not None and name not in self.supported_keys:
             return
-        for modifier in modifiers:
-            self.key(modifier, True)
-        self.key(name, True)
-        time.sleep(0.01)
-        self.key(name, False)
-        for modifier in reversed(modifiers):
-            self.key(modifier, False)
+        held = []
+        try:
+            for key in (*modifiers, name):
+                self.key(key, True)
+                held.append(key)
+            time.sleep(0.01)
+        finally:
+            release_error = None
+            for key in reversed(held):
+                try:
+                    self.key(key, False)
+                except OSError as error:
+                    release_error = error
+            if release_error is not None:
+                raise release_error
 
     def click(self, name, count):
         for index in range(count):
@@ -107,15 +115,14 @@ class InputBackend:
         if action == "request_perm":
             return self.ready()
         if not self.ready():
-            self.dragging = False
             return False
         if action == "move":
             x = command["dx"] + self.remainder_x
             y = command["dy"] + self.remainder_y
             step_x, step_y = int(x), int(y)
-            self.remainder_x, self.remainder_y = x - step_x, y - step_y
             if step_x or step_y:
                 self.move_by(step_x, step_y)
+            self.remainder_x, self.remainder_y = x - step_x, y - step_y
         elif action == "click":
             self.click(command["button"], command["count"])
         elif action == "drag":
@@ -190,7 +197,8 @@ class WindowsInput(InputBackend):
 
     def _send(self, *inputs):
         array = (self.INPUT * len(inputs))(*inputs)
-        return self.user32.SendInput(len(inputs), array, self.ctypes.sizeof(self.INPUT)) == len(inputs)
+        if self.user32.SendInput(len(inputs), array, self.ctypes.sizeof(self.INPUT)) != len(inputs):
+            raise OSError("Windows refused the input.")
 
     def _mouse(self, flags, data=0, dx=0, dy=0):
         event = self.INPUT(type=0)
@@ -207,12 +215,14 @@ class WindowsInput(InputBackend):
         # acceleration does not change the distance. A zero-length move then
         # tells apps (and drags) that the pointer moved.
         position = self.point()
-        self.user32.GetCursorPos(self.ctypes.byref(position))
+        if not self.user32.GetCursorPos(self.ctypes.byref(position)):
+            raise OSError("Windows refused to read the cursor position.")
         left, top = self.user32.GetSystemMetrics(76), self.user32.GetSystemMetrics(77)
         width, height = self.user32.GetSystemMetrics(78), self.user32.GetSystemMetrics(79)
         x = min(max(position.x + dx, left), left + width - 1)
         y = min(max(position.y + dy, top), top + height - 1)
-        self.user32.SetCursorPos(x, y)
+        if not self.user32.SetCursorPos(x, y):
+            raise OSError("Windows refused to move the cursor.")
         self._mouse(0x0001)
 
     def button(self, name, down):
@@ -241,8 +251,11 @@ class WindowsInput(InputBackend):
             units = char.encode("utf-16-le")
             for index in range(0, len(units), 2):
                 unit = int.from_bytes(units[index:index + 2], "little")
-                self._keyboard(scan=unit, flags=0x0004)
-                self._keyboard(scan=unit, flags=0x0004 | 0x0002)
+                down = self.INPUT(type=1)
+                down.union.ki = self.KEYBDINPUT(0, unit, 0x0004, 0, 0)
+                up = self.INPUT(type=1)
+                up.union.ki = self.KEYBDINPUT(0, unit, 0x0004 | 0x0002, 0, 0)
+                self._send(down, up)
             time.sleep(0.008)
 
 
@@ -283,6 +296,8 @@ class LinuxInput(InputBackend):
     UI_DEV_SETUP, UI_DEV_CREATE, UI_DEV_DESTROY = 0x405C5503, 0x5501, 0x5502
     DEVICE = "/dev/uinput"
 
+    monitor_drag = True
+
     def __init__(self, opener=None, ioctl=None, locked=None, typer=None):
         super().__init__()
         self.opener = opener or (lambda: os.open(self.DEVICE, os.O_WRONLY | os.O_NONBLOCK))
@@ -296,22 +311,40 @@ class LinuxInput(InputBackend):
         self.wheel_rest = [0, 0]  # Hi-res units not yet sent as whole notches.
 
     def type_with_tool(self, value):
-        """Type through xdotool (X11) or wtype (Wayland), which follow the active
-        keyboard layout and handle any character. Returns False to fall back."""
         if not self.typer:
             return False
         try:
-            result = subprocess.run([*self.typer, "--", value], capture_output=True, timeout=10)
-        except (OSError, subprocess.SubprocessError):
+            process = subprocess.Popen(self.typer, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, env=system_tool_env())
+        except FileNotFoundError:
+            self.typer = None
             return False
-        if result.returncode != 0:
-            self.typer = None  # e.g. wtype on GNOME, which lacks the protocol; stop trying.
-            return False
+        with process:
+            try:
+                deadline = time.monotonic() + 4
+                data = value.encode("utf-8")
+                while True:
+                    try:
+                        process.communicate(input=data, timeout=0.1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        data = None  # communicate() already has the original input buffered.
+                        if self.locked() or time.monotonic() >= deadline:
+                            raise OSError("Typing was interrupted before delivery could be confirmed.") from None
+                if process.returncode:
+                    self.typer = None
+                    raise OSError("The Linux typing tool did not confirm delivery.")
+            finally:
+                if process.poll() is None:
+                    process.kill()
         return True
 
     def ready(self):
         # uinput reaches the lock screen too, so refuse input while the session is locked.
         if self.locked():
+            # Removing the virtual device clears pressed buttons without injecting
+            # a release click into the screen locker or another user's session.
+            self.close(release=False)
             return False
         if self.fd is not None:
             return True
@@ -336,6 +369,9 @@ class LinuxInput(InputBackend):
             return False
         self.fd = fd
         time.sleep(0.3)  # Let the desktop pick up the new device before the first event.
+        if self.locked():
+            self.close(release=False)
+            return False
         return True
 
     def emit(self, event_type, code, value):
@@ -385,69 +421,91 @@ class LinuxInput(InputBackend):
             entry = self.CHARACTERS.get(char)
             if entry is None:
                 continue
+            if self.locked():
+                self.close(release=False)
+                raise OSError("Typing stopped because the desktop became unavailable.")
             shift, name = entry
             self.press(("shift",) if shift else (), name)
             time.sleep(0.004)
 
-    def close(self):
+    def close(self, release=True):
         if self.fd is None:
             return
         try:
-            super().close()
-            self.ioctl(self.fd, self.UI_DEV_DESTROY)
-        except OSError:
-            pass
-        os.close(self.fd)
-        self.fd = None
+            if release:
+                super().close()
+        finally:
+            try:
+                self.ioctl(self.fd, self.UI_DEV_DESTROY)
+            except OSError:
+                pass
+            os.close(self.fd)
+            self.fd = None
+            self.dragging = False
+            self.remainder_x = self.remainder_y = 0
+            self.wheel_rest[:] = [0, 0]
+
+
+def system_tool_env():
+    """System tools must use system libraries when launched by the Linux bundle."""
+    environment = os.environ.copy()
+    if getattr(sys, "frozen", False):
+        original = environment.get("LD_LIBRARY_PATH_ORIG")
+        if original is None:
+            environment.pop("LD_LIBRARY_PATH", None)
+        else:
+            environment["LD_LIBRARY_PATH"] = original
+    return environment
 
 
 def text_tool():
     """The command that types text in this desktop session, or None."""
     import shutil
     session = os.environ.get("XDG_SESSION_TYPE", "").lower()
-    if session == "wayland" and shutil.which("wtype"):
-        return ["wtype"]
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":")
+    if session == "wayland" and "gnome" not in desktop and shutil.which("wtype"):
+        return ["wtype", "-"]
     if session == "x11" and shutil.which("xdotool"):
-        return ["xdotool", "type", "--clearmodifiers", "--delay", "8"]
+        return ["xdotool", "type", "--clearmodifiers", "--delay", "8", "--file", "-"]
     return None
 
 
 class _LockCheck:
-    """Reports whether this desktop session is locked, checked at most every 2 seconds.
-
-    systemd-logind's LockedHint covers GNOME, KDE and others. Window managers such
-    as Sway, i3 and Hyprland do not set it, so a running screen locker counts too.
-    """
+    """Require an active session with a known unlocked state before injecting input."""
 
     LOCKERS = ("swaylock", "hyprlock", "gtklock", "waylock", "i3lock", "xsecurelock", "slock", "xlock")
+    LOGIND_DESKTOPS = {"gnome", "kde"}
 
     def __init__(self, run=None):
-        self.run = run or (lambda command: subprocess.run(command, capture_output=True, text=True, timeout=1))
-        self.checked = float("-inf")
-        self.value = False
+        self.run = run or self._run
+
+    @staticmethod
+    def _run(command):
+        return subprocess.run(command, capture_output=True, text=True, timeout=0.4, env=system_tool_env())
 
     def __call__(self):
-        now = time.monotonic()
-        if now - self.checked < 2:
-            return self.value
-        self.checked = now
-        self.value = self._logind() or self._locker_running()
-        return self.value
-
-    def _logind(self):
         session = os.environ.get("XDG_SESSION_ID") or "auto"
+        desktop = set(os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":"))
         try:
-            result = self.run(["loginctl", "show-session", session, "-p", "LockedHint", "--value"])
-        except (OSError, subprocess.SubprocessError):
-            return False
-        return result.stdout.strip() == "yes"
-
-    def _locker_running(self):
-        try:
-            result = self.run(["pgrep", "-u", str(os.getuid()), "-x", "|".join(self.LOCKERS)])
+            result = self.run(["loginctl", "show-session", session, "-p", "Active", "-p", "LockedHint"])
+            if result.returncode:
+                return True
+            properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            if properties.get("Active") != "yes" or properties.get("LockedHint") != "no":
+                return True
+            if desktop & self.LOGIND_DESKTOPS:
+                return False
+            locker = self.run(["pgrep", "-u", str(os.getuid()), "-x", "|".join(self.LOCKERS)])
+            if locker.returncode != 1:
+                return True
+            # Other desktops must positively report screen state. A missing locker
+            # process by itself is not proof that the session is unlocked.
+            screen = self.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.ScreenSaver",
+                               "--object-path", "/org/freedesktop/ScreenSaver",
+                               "--method", "org.freedesktop.ScreenSaver.GetActive"])
+            return screen.returncode != 0 or screen.stdout.strip() != "(false,)"
         except (OSError, subprocess.SubprocessError, AttributeError):
-            return False
-        return result.returncode == 0
+            return True
 
 
 session_locked = _LockCheck()
