@@ -22,10 +22,15 @@ def run_server():
 
 
 KEEP_RUNNING = default_state_dir() / ".keep-running"
+ALLOW_BACKGROUND = default_state_dir() / ".allow-background-resume"
 
 
-def server_command(keep_running=False):
-    extra = ["--keep-running"] if keep_running else []
+def server_command(keep_running=False, allow_background=False):
+    extra = []
+    if keep_running:
+        extra.append("--keep-running")
+    if allow_background:
+        extra.append("--allow-background-resume")
     if getattr(sys, "frozen", False):
         return [sys.executable, "--server", "--launcher", *extra]
     return [sys.executable, "-B", "-u", str(Path(__file__).resolve().with_name("server.py")), "--launcher", *extra]
@@ -58,20 +63,16 @@ class App:
         self.root = tk.Tk()
         self.root.title("Lazy Remote")
         self.root.resizable(False, False)
+        self.root.minsize(490, 0)
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
         icon = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)) / "assets" / "touch-icon.png"
         try:
             self.icon = tk.PhotoImage(file=str(icon))
             self.root.iconphoto(True, self.icon)
+            self.brand_icon = self.icon.subsample(4, 4)
         except tk.TclError:
-            pass
-        style = ttk.Style(self.root)
-        if IS_LINUX and "clam" in style.theme_names():
-            style.theme_use("clam")  # Windows keeps its native theme.
-        style.configure("Title.TLabel", font=("TkDefaultFont", 16, "bold"))
-        style.configure("Head.TLabel", font=("TkDefaultFont", 11, "bold"))
-        style.configure("Match.TLabel", font=("TkFixedFont", 28, "bold"))
-        style.configure("Muted.TLabel", foreground="#666666")
+            self.brand_icon = None
+        self.configure_theme()
 
         self.events = queue.Queue()
         self.process = None
@@ -79,6 +80,7 @@ class App:
         self.show_code = tk.BooleanVar(value=False)
         self.address = tk.StringVar()
         self.keep_running = tk.BooleanVar(value=KEEP_RUNNING.exists())
+        self.allow_background = tk.BooleanVar(value=ALLOW_BACKGROUND.exists())
         self.reset_state()
         self.phase = "stopped"
         self.notice = None
@@ -86,12 +88,37 @@ class App:
         self.render()
         self.root.after(100, self.poll)
 
+    def configure_theme(self):
+        style = self.ttk.Style(self.root)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        page, surface, text, muted = "#f2f4f5", "#ffffff", "#161f28", "#4c5967"
+        self.root.configure(background=page)
+        style.configure("Shell.TFrame", background=page)
+        style.configure("TFrame", background=surface)
+        style.configure("Card.TFrame", background=surface, relief="solid", borderwidth=1,
+                        bordercolor="#cad4dc", lightcolor="#cad4dc", darkcolor="#cad4dc")
+        style.configure("TLabel", background=surface, foreground=text)
+        style.configure("TButton", padding=(12, 7), foreground=text, background="#ecf0f2")
+        style.map("TButton", background=[("active", "#dbe3e8")])
+        style.configure("Primary.TButton", background="#326218", foreground="#ffffff")
+        style.map("Primary.TButton", background=[("active", "#274d12")])
+        style.configure("TCheckbutton", background=surface, foreground=text)
+        style.configure("TRadiobutton", background=surface, foreground=text)
+        style.configure("Brand.TLabel", background=page, font=("TkDefaultFont", 19, "bold"))
+        style.configure("Status.TLabel", background=page, foreground=muted)
+        style.configure("Online.TLabel", background=page, foreground="#326218")
+        style.configure("Title.TLabel", font=("TkDefaultFont", 18, "bold"))
+        style.configure("Head.TLabel", font=("TkDefaultFont", 12, "bold"))
+        style.configure("Match.TLabel", font=("TkFixedFont", 28, "bold"),
+                        background="#e3efda", foreground="#326218", padding=(12, 5))
+        style.configure("Muted.TLabel", foreground=muted)
+
     # Server process -------------------------------------------------------
     def reset_state(self):
         self.urls, self.code, self.qr, self.match = [], None, None, None
         self.paired = self.remembered = self.approved = self.loopback = False
         self.input_ready = self.certificates = self.fingerprint = None
-        self.share_url = None
         self.address.set("")
 
     def start(self):
@@ -101,7 +128,7 @@ class App:
         flags = 0x08000000 if IS_WINDOWS else 0  # CREATE_NO_WINDOW: no console window.
         try:
             self.process = subprocess.Popen(
-                server_command(self.keep_running.get()), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                server_command(self.keep_running.get(), self.allow_background.get()), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, creationflags=flags,
             )
         except OSError as error:
@@ -195,12 +222,6 @@ class App:
         if kind == "permission":
             self.input_ready = event.get("input_ready")
             return
-        if kind == "certificate_share":
-            self.share_url = event.get("url")
-            return
-        if kind == "certificate_share_ended":
-            self.share_url = None
-            return
         if kind == "ready":
             self.urls = event.get("urls") or []
             self.address.set(self.urls[0] if self.urls else "")
@@ -233,51 +254,67 @@ class App:
         ttk = self.ttk
         if self.body is not None:
             self.body.destroy()
-        body = self.body = ttk.Frame(self.root, padding=20)
+        body = self.body = ttk.Frame(self.root, padding=20, style="Shell.TFrame")
         body.pack(fill="both", expand=True)
 
-        header = ttk.Frame(body)
-        header.pack(fill="x")
-        ttk.Label(header, text="Lazy Remote", style="Title.TLabel").pack(side="left")
+        header = ttk.Frame(body, style="Shell.TFrame")
+        header.pack(fill="x", pady=(0, 14))
+        if self.brand_icon is not None:
+            ttk.Label(header, image=self.brand_icon, style="Brand.TLabel").pack(side="left", padx=(0, 9))
+        brand = ttk.Frame(header, style="Shell.TFrame")
+        brand.pack(side="left")
+        ttk.Label(brand, text="Lazy Remote", style="Brand.TLabel").pack(anchor="w")
         status = {"stopped": "Server stopped", "starting": "Starting server…",
-                  "running": "Server running on this PC", "stopping": "Stopping server…"}[self.phase]
-        ttk.Label(header, text="  " + status, style="Muted.TLabel").pack(side="left")
+                  "running": "Phone connected" if self.paired else "Server running",
+                  "stopping": "Stopping server…"}[self.phase]
+        ttk.Label(brand, text=status, style="Online.TLabel" if self.phase == "running" else "Status.TLabel").pack(anchor="w")
         if self.phase in ("starting", "running"):
             ttk.Button(header, text="Stop server", command=self.stop).pack(side="right")
+        ttk.Button(header, text="Set up phone", command=self.open_guide).pack(side="right", padx=6)
 
         if self.notice:
-            self.label(body, "⚠ " + self.notice, pady=(10, 0))
+            self.label(self.card(body), self.notice)
 
         if self.phase == "stopped":
-            self.label(body, "Control this PC from your phone.", pady=(14, 8))
-            row = ttk.Frame(body)
-            row.pack(anchor="w")
-            ttk.Button(row, text="Start server", command=self.start).pack(side="left")
-            ttk.Button(row, text="Setup guide", command=self.open_guide).pack(side="left", padx=8)
-            ttk.Checkbutton(body, text="Keep running when the phone is idle", variable=self.keep_running,
-                            command=self.save_keep_running).pack(anchor="w", pady=(12, 0))
-            self.label(body, "The server stays on until you stop it. The phone still locks after 5 minutes."
+            intro = self.card(body)
+            self.label(intro, "Your phone is the remote", "Title.TLabel")
+            self.label(intro, "Use it as a trackpad, keyboard, and media controller on your Wi-Fi.",
+                       "Muted.TLabel", pady=(5, 12))
+            ttk.Button(intro, text="Start server", command=self.start, style="Primary.TButton").pack(anchor="w")
+            settings = self.card(body)
+            self.label(settings, "Session settings", "Head.TLabel")
+            ttk.Checkbutton(settings, text="Keep running when the phone is idle", variable=self.keep_running,
+                            command=lambda: self.save_setting(KEEP_RUNNING, self.keep_running.get())).pack(anchor="w", pady=(8, 0))
+            self.label(settings, "The server stays on until you stop it. The phone still locks after 5 minutes."
                        if self.keep_running.get() else
                        "The server stops after 30 minutes without phone activity.", "Muted.TLabel")
+            self.background_setting(settings)
             return
         if self.phase != "running":
+            self.label(self.card(body), status, "Head.TLabel")
             return
 
         if self.input_ready is False:
-            self.label(body, "Mouse and keyboard control is not allowed yet. Open the setup guide, step 2.",
-                       pady=(10, 0))
-        self.connection(body)
-        self.pairing(body)
-        ttk.Separator(body).pack(fill="x", pady=12)
-        ttk.Button(body, text="Set up phone", command=self.open_guide).pack(anchor="e")
+            permission = self.card(body)
+            self.label(permission, "Input access needed", "Head.TLabel")
+            self.label(permission, "Open the setup guide to enable mouse and keyboard control.", "Muted.TLabel")
+        self.connection(self.card(body))
+        self.pairing(self.card(body))
+
+    def card(self, parent):
+        card = self.ttk.Frame(parent, padding=14, style="Card.TFrame")
+        card.pack(fill="x", pady=(0, 10))
+        return card
 
     def connection(self, body):
         ttk = self.ttk
-        self.label(body, "Phone address", "Head.TLabel", pady=(14, 4))
+        self.label(body, "Phone address", "Head.TLabel", pady=(0, 7))
         row = ttk.Frame(body)
         row.pack(fill="x")
         if len(self.urls) > 1:
-            ttk.Combobox(row, textvariable=self.address, values=self.urls, state="readonly", width=34).pack(side="left")
+            addresses = ttk.Combobox(row, textvariable=self.address, values=self.urls, state="readonly", width=34)
+            addresses.pack(side="left")
+            addresses.bind("<<ComboboxSelected>>", lambda _: self.render())
         else:
             entry = ttk.Entry(row, textvariable=self.address, width=36, state="readonly")
             entry.pack(side="left")
@@ -286,16 +323,24 @@ class App:
             self.label(body, "Connect this PC and your phone to the same private network, then restart the server.",
                        "Muted.TLabel")
 
-    def save_keep_running(self):
+    def save_setting(self, path, enabled):
         try:
-            if self.keep_running.get():
-                KEEP_RUNNING.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-                KEEP_RUNNING.touch()
+            if enabled:
+                path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+                path.touch()
             else:
-                KEEP_RUNNING.unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
         except OSError:
-            pass
+            self.notice = "Could not save the setting. It still applies to this launch."
         self.render()
+
+    def background_setting(self, parent):
+        self.ttk.Checkbutton(
+            parent, text="Keep phone access when switching apps", variable=self.allow_background,
+            command=lambda: self.save_setting(ALLOW_BACKGROUND, self.allow_background.get()),
+        ).pack(anchor="w", pady=(8, 0))
+        self.label(parent, "With this off, leaving the remote page locks it and requires approval again.",
+                   "Muted.TLabel")
 
     def copy_address(self):
         self.root.clipboard_clear()
@@ -304,7 +349,7 @@ class App:
     def pairing(self, body):
         ttk = self.ttk
         frame = ttk.Frame(body)
-        frame.pack(fill="x", pady=(14, 0))
+        frame.pack(fill="x")
         if self.match:
             self.label(frame, "Approved. Waiting for your phone…" if self.approved else "Phone requests control",
                        "Head.TLabel")
@@ -314,18 +359,13 @@ class App:
                 row = ttk.Frame(frame)
                 row.pack(anchor="w", pady=6)
                 match = self.match
-                ttk.Button(row, text="Approve", command=lambda: self.send(f"approve {match}")).pack(side="left")
+                ttk.Button(row, text="Approve", command=lambda: self.send(f"approve {match}"), style="Primary.TButton").pack(side="left")
                 ttk.Button(row, text="Deny", command=lambda: self.send(f"deny {match}")).pack(side="left", padx=8)
         elif self.paired:
-            self.label(frame, "✓ Phone connected", "Head.TLabel")
-            text = "Forget browser" if self.remembered else "Revoke and show a new QR code"
-            ttk.Button(frame, text=text,
-                       command=lambda: self.send("forget" if self.remembered else "new_code")).pack(anchor="w", pady=6)
-        elif self.remembered:
-            self.label(frame, "Browser remembered", "Head.TLabel")
-            self.label(frame, "Open the same address on your phone and tap Request access.", "Muted.TLabel")
-            ttk.Button(frame, text="Forget browser & show QR code",
-                       command=lambda: self.send("forget")).pack(anchor="w", pady=6)
+            self.label(frame, "Phone connected", "Head.TLabel")
+            ttk.Button(frame, text="Lock phone", command=lambda: self.send("new_code")).pack(anchor="w", pady=6)
+            if self.remembered:
+                ttk.Button(frame, text="Forget browser", command=lambda: self.send("forget")).pack(anchor="w")
         elif self.qr and self.code and self.address.get():
             row = ttk.Frame(frame)
             row.pack(fill="x")
@@ -333,10 +373,12 @@ class App:
             side = ttk.Frame(row)
             side.pack(side="left", padx=16, fill="both")
             ttk.Label(side, text="Scan to pair", style="Head.TLabel").pack(anchor="w")
-            ttk.Label(side, text="Use your phone camera, then request access and approve it here.",
+            message = ("Open the same address to reconnect, or scan to pair at this address." if self.remembered
+                       else "Tap Scan pairing QR in the phone app, or use your phone camera. Approve the request here.")
+            ttk.Label(side, text=message,
                       style="Muted.TLabel", wraplength=240).pack(anchor="w")
             ttk.Label(side, text="QR code expires in 10 minutes.", style="Muted.TLabel").pack(anchor="w", pady=4)
-            ttk.Checkbutton(side, text="Enter a code instead", variable=self.show_code,
+            ttk.Checkbutton(side, text="Show pairing code", variable=self.show_code,
                             command=self.render).pack(anchor="w")
             if self.show_code.get():
                 code = ttk.Entry(side, width=16, font=("TkFixedFont", 13, "bold"))
@@ -344,13 +386,17 @@ class App:
                 code.configure(state="readonly")
                 code.pack(anchor="w", pady=4)
         else:
+            if self.remembered:
+                self.label(frame, "Open the same address on your phone and tap Request access.", "Muted.TLabel")
             ttk.Button(frame, text="Show a new pairing QR code", command=lambda: self.send("new_code")).pack(anchor="w")
+        if self.remembered and not self.paired and not self.match:
+            ttk.Button(frame, text="Forget browser", command=lambda: self.send("forget")).pack(anchor="w", pady=4)
 
     def draw_qr(self, parent, payload, size=176):
         try:
             import qrcode
         except ImportError:
-            self.ttk.Label(parent, text="QR codes need the qrcode package.\nUse “Enter a code instead”.",
+            self.ttk.Label(parent, text="QR codes need the qrcode package.\nUse “Show pairing code”.",
                            style="Muted.TLabel").pack(side="left")
             return
         code = qrcode.QRCode(border=2, error_correction=qrcode.constants.ERROR_CORRECT_M)
@@ -384,19 +430,24 @@ class App:
             child.destroy()
         frame = ttk.Frame(guide, padding=20)
         frame.pack(fill="both")
-        ttk.Label(frame, text="Set up Lazy Remote", style="Title.TLabel").pack(anchor="w", pady=(0, 10))
+        ttk.Label(frame, text="Set up your phone", style="Title.TLabel").pack(anchor="w", pady=(0, 10))
 
         def step(number, title):
             ttk.Label(frame, text=f"{number}.  {title}", style="Head.TLabel").pack(anchor="w", pady=(10, 2))
 
         step(1, "Start the server")
-        self.label(frame, "Click Start server in the main window. It creates this PC’s certificate. "
+        if self.phase == "stopped":
+            ttk.Button(frame, text="Start server", command=self.start, style="Primary.TButton").pack(anchor="w", pady=4)
+            self.background_setting(frame)
+        self.label(frame, "Starting the server creates this PC’s certificate. "
                           "If a firewall asks, allow Lazy Remote on private networks only.")
+        if self.notice:
+            self.label(frame, self.notice)
 
         step(2, "Allow mouse and keyboard control")
         if IS_LINUX:
             import input_backends
-            self.label(frame, "Linux needs access to /dev/uinput, the virtual input device. "
+            self.label(frame, "Linux needs an active desktop with a readable lock state and access to /dev/uinput. "
                               "Run this once in a terminal, then log out and back in:")
             command = self.tk.Text(frame, height=4, width=62, wrap="word")
             command.insert("1.0", input_backends.LINUX_SETUP)
@@ -439,46 +490,18 @@ class App:
                          "Choose Install a certificate → CA certificate, then pick the file."]
             for index, line in enumerate(steps, 1):
                 self.label(frame, f"{index}. {line}", "Muted.TLabel")
-            if self.share_url:
-                share = ttk.Frame(frame)
-                share.pack(anchor="w", pady=6)
-                self.draw_qr(share, self.share_url, size=120)
-                side = ttk.Frame(share)
-                side.pack(side="left", padx=12)
-                ttk.Label(side, text="Scan with the phone camera to download.", wraplength=300).pack(anchor="w")
-                ttk.Label(side, text="Stops after 2 minutes or two downloads. Plain Wi-Fi link: install only "
-                                     "if the fingerprint on the phone matches the one below.",
-                          style="Muted.TLabel", wraplength=300).pack(anchor="w", pady=4)
-                ttk.Button(side, text="Stop sharing",
-                           command=lambda: self.send("stop_certificate_share")).pack(anchor="w")
-            else:
-                ttk.Button(frame, text="Send to the phone over Wi-Fi with a QR code",
-                           command=lambda: self.send("share_certificate")).pack(anchor="w", pady=4)
             if self.fingerprint:
                 fingerprint = ttk.Entry(frame, width=70)
                 fingerprint.insert(0, self.fingerprint)
                 fingerprint.configure(state="readonly")
                 self.label(frame, "Fingerprint, to check on the phone:", "Muted.TLabel")
                 fingerprint.pack(anchor="w")
-            self.label(frame, "This file is public. Send it only from this PC to your own phone.", "Muted.TLabel")
+            self.label(frame, "Transfer the profile or certificate directly to your own phone.", "Muted.TLabel")
 
         step(4, "Pair your phone")
-        self.label(frame, "Join the same Wi-Fi. Scan the QR code with the phone camera, tap Request access, "
-                          "then click Approve here if the numbers match.")
+        self.label(frame, "Join the same Wi-Fi. Open the phone address to install Lazy Remote, or scan the pairing QR. "
+                          "Approve the request on this computer.")
         ttk.Button(frame, text="Done", command=self.guide.destroy).pack(anchor="e", pady=(12, 0))
-
-
-def first_launch():
-    """True once: the setup guide opens by itself the first time, like the Mac app."""
-    marker = default_state_dir() / ".setup-guide-seen"
-    if marker.exists():
-        return False
-    try:
-        marker.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        marker.touch()
-    except OSError:
-        pass
-    return True
 
 
 def main():
@@ -486,8 +509,6 @@ def main():
         run_server()
         return
     app = App()
-    if first_launch():
-        app.root.after(300, app.open_guide)
     app.root.mainloop()
 
 

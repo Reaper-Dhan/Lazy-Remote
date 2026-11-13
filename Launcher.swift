@@ -16,12 +16,9 @@ private struct ServerEvent: Decodable {
     let match: String?
     let approved: Bool?
     let message: String?
-    let url: String?
-    let seconds: Int?
 
     enum CodingKeys: String, CodingKey {
         case event, urls, certificates, fingerprint, loopback, code, qr, paired, remembered, match, approved, message
-        case url, seconds
         case inputReady = "input_ready"
     }
 }
@@ -53,12 +50,13 @@ private final class Launcher: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var certificates: String?
     @Published private(set) var fingerprint: String?
-    /// Plain-HTTP link offering the phone certificate, while a share is open.
-    @Published private(set) var shareURL: String?
-    @Published private(set) var shareUntil: Date?
     /// Off by default: the server stops after 30 minutes without phone activity.
     @Published var keepRunning = UserDefaults.standard.bool(forKey: "keepRunning") {
         didSet { UserDefaults.standard.set(keepRunning, forKey: "keepRunning") }
+    }
+
+    @Published var allowBackgroundResume = UserDefaults.standard.bool(forKey: "allowBackgroundResume") {
+        didSet { UserDefaults.standard.set(allowBackgroundResume, forKey: "allowBackgroundResume") }
     }
 
     private var process: Process?
@@ -125,7 +123,10 @@ private final class Launcher: ObservableObject {
         let input = Pipe()
         let output = Pipe()
         server.executableURL = URL(fileURLWithPath: python)
-        server.arguments = ["-B", "-u", script.path, "--launcher"] + (keepRunning ? ["--keep-running"] : [])
+        var arguments = ["-E", "-s", "-B", "-u", script.path, "--launcher"]
+        if keepRunning { arguments.append("--keep-running") }
+        if allowBackgroundResume { arguments.append("--allow-background-resume") }
+        server.arguments = arguments
         server.currentDirectoryURL = project
         server.standardInput = input
         server.standardOutput = output
@@ -197,16 +198,6 @@ private final class Launcher: ObservableObject {
             return
         }
         guard phase == .starting || phase == .running else { return }
-        if event.event == "certificate_share" {
-            shareURL = event.url
-            shareUntil = Date().addingTimeInterval(TimeInterval(event.seconds ?? 120))
-            return
-        }
-        if event.event == "certificate_share_ended" {
-            shareURL = nil
-            shareUntil = nil
-            return
-        }
         if event.event == "permission" {
             inputReady = event.inputReady
             return
@@ -252,8 +243,6 @@ private final class Launcher: ObservableObject {
         inputReady = nil
         certificates = nil
         fingerprint = nil
-        shareURL = nil
-        shareUntil = nil
     }
 }
 
@@ -292,17 +281,28 @@ private struct SetupGuide: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Set up Lazy Remote").font(.title2.bold())
+            Label("Set up your phone", systemImage: "iphone").font(.title2.bold())
 
             step(1, "Start the server") {
-                Text(launcher.phase == .running
-                     ? "Running. Keep this window open while you use the remote."
-                     : "Click Start server in the main window. It creates this Mac’s certificate.")
+                if launcher.phase == .stopped {
+                    Button("Start server", action: launcher.start).buttonStyle(.borderedProminent)
+                    Toggle("Keep phone access when switching apps", isOn: $launcher.allowBackgroundResume)
+                    Text("With this off, leaving the remote page locks it and requires approval again.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Starting the server creates this Mac’s certificate.")
+                } else if launcher.phase == .running {
+                    Text("Server running.")
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                if let notice = launcher.notice { Text(notice) }
             }
 
             step(2, "Allow mouse and keyboard control") {
                 Text("Turn on Lazy Remote in System Settings → Privacy & Security → Accessibility.")
-                Button("Open Accessibility Settings") { launcher.openAccessibility(request: true) }
+                if launcher.phase == .running && launcher.inputReady != true {
+                    Button("Open Accessibility Settings") { launcher.openAccessibility(request: true) }
+                }
             }
 
             step(3, "Trust this Mac on your phone (once)") {
@@ -332,7 +332,6 @@ private struct SetupGuide: View {
                         "Choose Install a certificate → CA certificate, then pick the file.",
                     ])
                 }
-                wifiShare
                 if let fingerprint = launcher.fingerprint {
                     Text("Fingerprint, to check on the phone: \(fingerprint)")
                         .font(.caption.monospaced())
@@ -340,50 +339,22 @@ private struct SetupGuide: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("This file is public. Send it only from this Mac to your own phone.")
+                Text("Transfer the profile or certificate directly to your own phone. Use AirDrop or a cable.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             step(4, "Pair your phone") {
-                Text("Join the same Wi-Fi. Scan the QR code with the phone camera, tap Request access, then click Approve here if the numbers match.")
+                Text("Join the same Wi-Fi. Open the phone address to install Lazy Remote, or scan the pairing QR. Approve the request on this Mac.")
             }
 
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .padding(24)
         .frame(width: 520, alignment: .leading)
-    }
-
-    /// Offers the certificate over Wi-Fi for two minutes, for phones that can't
-    /// receive AirDrop. The page and this window both show the fingerprint.
-    @ViewBuilder
-    private var wifiShare: some View {
-        if launcher.phase == .running {
-            if let url = launcher.shareURL {
-                HStack(alignment: .top, spacing: 14) {
-                    PairingQR(payload: url)
-                        .scaleEffect(0.7, anchor: .topLeading)
-                        .frame(width: 124, height: 124, alignment: .topLeading)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Scan with the phone camera to download.")
-                        if let until = launcher.shareUntil {
-                            Text("Stops \(until, style: .relative), or after two downloads.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Text("Plain Wi-Fi link: install only if the fingerprint on the phone matches the one below.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Stop sharing") { launcher.send("stop_certificate_share") }
-                    }
-                }
-            } else {
-                Button("Or send over Wi-Fi with a QR code") { launcher.send("share_certificate") }
-            }
-        }
     }
 
     private func step<Content: View>(_ number: Int, _ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -422,104 +393,146 @@ private struct SetupGuide: View {
     }
 }
 
+private extension View {
+    func remoteCard() -> some View {
+        padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.1))
+            }
+    }
+}
+
 private struct LauncherView: View {
     @ObservedObject var launcher: Launcher
     @State private var showCode = false
     @State private var copiedAddress: String?
     @State private var showGuide = false
-    @AppStorage("setupGuideSeen") private var setupGuideSeen = false
+    @State private var showSettings = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                Image(nsImage: NSApplication.shared.applicationIconImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 44, height: 44)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Lazy Remote").font(.title2.bold())
-                    Text(status).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if launcher.phase == .running || launcher.phase == .starting {
-                    Button("Stop server", action: launcher.stop)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
+            header
             if let notice = launcher.notice {
                 Label(notice, systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .remoteCard()
             }
-
             switch launcher.phase {
             case .stopped:
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Control this Mac from your phone.")
-                    HStack {
-                        Button("Start server", action: launcher.start)
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                            .keyboardShortcut(.defaultAction)
-                        Button("Setup guide") { showGuide = true }
-                            .controlSize(.large)
-                    }
-                    Toggle("Keep running when the phone is idle", isOn: $launcher.keepRunning)
-                    Text(launcher.keepRunning
-                         ? "The server stays on until you stop it. The phone still locks after 5 minutes."
-                         : "The server stops after 30 minutes without phone activity.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                startCard
+                sessionSettings
             case .starting, .stopping:
-                ProgressView().controlSize(.small)
+                HStack(spacing: 12) {
+                    ProgressView().controlSize(.small)
+                    Text(status).font(.headline)
+                }
+                .remoteCard()
             case .running:
                 if launcher.inputReady == false {
-                    Label("Allow Accessibility access to enable mouse and keyboard control.", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                connection
-                pairing
-                Divider()
-                HStack {
-                    if launcher.inputReady == false {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Input access needed", systemImage: "hand.raised")
+                            .font(.headline)
+                        Text("Allow Accessibility access to use the mouse and keyboard.")
+                            .foregroundStyle(.secondary)
                         Button("Open Accessibility Settings") { launcher.openAccessibility(request: true) }
                     }
-                    Spacer()
-                    Button("Set up phone") { showGuide = true }
+                    .remoteCard()
                 }
+                connection.remoteCard()
+                VStack(alignment: .leading, spacing: 10) { pairing }
+                    .remoteCard()
             }
         }
-        .padding(24)
-        .frame(width: 540, alignment: .leading)
+        .padding(22)
+        .frame(width: 560, alignment: .leading)
         .sheet(isPresented: $showGuide) { SetupGuide(launcher: launcher) }
-        .onAppear {
-            launcher.showWindow = { openWindow(id: "launcher") }
-            if !setupGuideSeen {
-                setupGuideSeen = true
-                showGuide = true
-            }
-        }
+        .onAppear { launcher.showWindow = { openWindow(id: "launcher") } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             launcher.send("check_access")
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Lazy Remote").font(.system(size: 23, weight: .bold))
+                HStack(spacing: 5) {
+                    Circle().fill(launcher.phase == .running ? Color.green : Color.secondary)
+                        .frame(width: 6, height: 6)
+                        .accessibilityHidden(true)
+                    Text(status).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button { showGuide = true } label: {
+                Label("Set up phone", systemImage: "iphone")
+            }
+            if launcher.phase == .running || launcher.phase == .starting {
+                Button("Stop server", action: launcher.stop)
+            }
+        }
+    }
+
+    private var startCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Your phone is the remote", systemImage: "iphone.and.arrow.forward")
+                .font(.title2.bold())
+                .foregroundStyle(.white)
+            Text("Use it as a trackpad, keyboard, and media controller on your Wi-Fi.")
+                .foregroundStyle(Color.white.opacity(0.78))
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Start server", action: launcher.start)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(Color(red: 0.29, green: 0.48, blue: 0.19))
+                .keyboardShortcut(.defaultAction)
+                .padding(.top, 3)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(red: 0.13, green: 0.17, blue: 0.22), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var sessionSettings: some View {
+        DisclosureGroup("Session settings", isExpanded: $showSettings) {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Keep phone access when switching apps", isOn: $launcher.allowBackgroundResume)
+                    Text("Off by default. Leaving the remote page requires approval again.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Keep running when the phone is idle", isOn: $launcher.keepRunning)
+                    Text("Off by default. The server stops after 30 minutes without phone activity.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 10)
+        }
+        .remoteCard()
     }
 
     private var status: String {
         switch launcher.phase {
         case .stopped: "Server stopped"
         case .starting: "Starting server…"
-        case .running: "Server running on this Mac"
+        case .running: launcher.paired ? "Phone connected" : "Server running"
         case .stopping: "Stopping server…"
         }
     }
 
     private var connection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Phone address").font(.headline)
+            Label("Phone address", systemImage: "link").font(.headline)
             HStack {
                 if launcher.urls.count > 1 {
                     Picker("Phone address", selection: $launcher.address) {
@@ -527,7 +540,7 @@ private struct LauncherView: View {
                     }
                     .labelsHidden()
                 } else {
-                    Text(launcher.address).textSelection(.enabled)
+                    Text(launcher.address).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
                 Spacer()
                 Button(copiedAddress == launcher.address ? "Copied" : "Copy link") {
@@ -550,6 +563,9 @@ private struct LauncherView: View {
                 Text(launcher.approved ? "Approved. Waiting for your phone…" : "Phone requests control")
                     .font(.headline)
                 Text(match).font(.system(size: 32, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                     .textSelection(.enabled)
                 if !launcher.approved {
                     Text("Approve only if this number matches the one on your phone.")
@@ -564,28 +580,26 @@ private struct LauncherView: View {
         } else if launcher.paired {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Phone connected", systemImage: "checkmark.circle").font(.headline)
-                Button(launcher.remembered ? "Forget browser" : "Revoke and show a new QR code") {
-                    launcher.send(launcher.remembered ? "forget" : "new_code")
+                HStack {
+                    Button("Lock phone") { launcher.send("new_code") }
+                    if launcher.remembered {
+                        Button("Forget browser") { launcher.send("forget") }
+                    }
                 }
-            }
-        } else if launcher.remembered {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Browser remembered").font(.headline)
-                Text("Open the same address on your phone and tap Request access.")
-                    .foregroundStyle(.secondary)
-                Button("Forget browser & show QR code") { launcher.send("forget") }
             }
         } else if let qr = launcher.qr, let code = launcher.code, !launcher.address.isEmpty {
             HStack(alignment: .center, spacing: 20) {
                 PairingQR(payload: launcher.address + "#pair=" + qr)
                 VStack(alignment: .leading, spacing: 9) {
                     Text("Scan to pair").font(.headline)
-                    Text("Use your phone camera, then request access and approve it here.")
+                    Text(launcher.remembered
+                         ? "Open the same address to reconnect, or scan to pair at this address."
+                         : "Tap Scan pairing QR in the phone app, or use your phone camera. Approve the request here.")
                         .foregroundStyle(.secondary)
                     Text("QR code expires in 10 minutes.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    DisclosureGroup("Enter a code instead", isExpanded: $showCode) {
+                    DisclosureGroup("Show pairing code", isExpanded: $showCode) {
                         Text(code)
                             .font(.system(.body, design: .monospaced).weight(.semibold))
                             .textSelection(.enabled)
@@ -595,7 +609,15 @@ private struct LauncherView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            Button("Show a new pairing QR code") { launcher.send("new_code") }
+            VStack(alignment: .leading, spacing: 8) {
+                if launcher.remembered {
+                    Text("Open the same address on your phone and tap Request access.")
+                }
+                Button("Show a new pairing QR code") { launcher.send("new_code") }
+            }
+        }
+        if launcher.remembered && !launcher.paired && launcher.match == nil {
+            Button("Forget browser") { launcher.send("forget") }
         }
     }
 }
