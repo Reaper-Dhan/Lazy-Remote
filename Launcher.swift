@@ -286,8 +286,8 @@ private struct SetupGuide: View {
             step(1, "Start the server") {
                 if launcher.phase == .stopped {
                     Button("Start server", action: launcher.start).buttonStyle(.borderedProminent)
-                    Toggle("Keep phone access when switching apps", isOn: $launcher.allowBackgroundResume)
-                    Text("With this off, leaving the remote page locks it and requires approval again.")
+                    Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)
+                    Text("Resume the same tab within one minute, or up to five minutes with this on.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Starting the server creates this Mac’s certificate.")
                 } else if launcher.phase == .running {
@@ -505,8 +505,8 @@ private struct LauncherView: View {
         DisclosureGroup("Session settings", isExpanded: $showSettings) {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Keep phone access when switching apps", isOn: $launcher.allowBackgroundResume)
-                    Text("Off by default. Leaving the remote page requires approval again.")
+                    Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)
+                    Text("Resume the same tab within one minute, or up to five minutes with this on.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Divider()

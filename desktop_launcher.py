@@ -336,10 +336,10 @@ class App:
 
     def background_setting(self, parent):
         self.ttk.Checkbutton(
-            parent, text="Keep phone access when switching apps", variable=self.allow_background,
+            parent, text="Extend phone reconnect window", variable=self.allow_background,
             command=lambda: self.save_setting(ALLOW_BACKGROUND, self.allow_background.get()),
         ).pack(anchor="w", pady=(8, 0))
-        self.label(parent, "With this off, leaving the remote page locks it and requires approval again.",
+        self.label(parent, "Resume the same tab within one minute, or up to five minutes with this on.",
                    "Muted.TLabel")
 
     def copy_address(self):
