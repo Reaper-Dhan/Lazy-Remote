@@ -73,13 +73,10 @@ public final class TvControls extends AccessibilityService {
     }
 
     String[] keys() {
-        var actions = getSystemActions();
-        var keys = new ArrayList<String>();
-        NAVIGATION.forEach((name, id) -> {
-            if (actions.stream().anyMatch(action -> action.getId() == id)) keys.add(name);
-        });
+        // Android 13 can perform its built-in D-pad actions without listing them in getSystemActions.
+        var keys = new ArrayList<>(NAVIGATION.keySet());
         if (Build.VERSION.SDK_INT >= 36
-                && actions.stream().anyMatch(action -> action.getId() == GLOBAL_ACTION_MEDIA_PLAY_PAUSE)) {
+                && getSystemActions().stream().anyMatch(action -> action.getId() == GLOBAL_ACTION_MEDIA_PLAY_PAUSE)) {
             keys.add("media_play");
         }
         if (!getSystemService(AudioManager.class).isVolumeFixed()) {
