@@ -121,7 +121,22 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+        run: |
+          sdk="$RUNNER_TEMP/lazy-android-sdk"
+          stage="$RUNNER_TEMP/lazy-android-sdk-download"
+          mkdir -p "$sdk/platforms" "$sdk/build-tools" "$stage"
+          cd "$stage"
+          curl --fail --silent --show-error --retry 3 -O https://dl.google.com/android/repository/platform-36_r02.zip
+          curl --fail --silent --show-error --retry 3 -O https://dl.google.com/android/repository/build-tools_r35_linux.zip
+          sha1sum --check <<'CHECKSUMS'
+          2c1a80dd4d9f7d0e6dd336ec603d9b5c55a6f576  platform-36_r02.zip
+          2cfaa0bbb2336e9ec18ed3ecea84fa2e2af607bc  build-tools_r35_linux.zip
+          CHECKSUMS
+          unzip -q platform-36_r02.zip -d platform
+          unzip -q build-tools_r35_linux.zip -d tools
+          mv platform/* "$sdk/platforms/android-36"
+          mv tools/* "$sdk/build-tools/35.0.0"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
       - name: Build and verify the Android TV preview
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
