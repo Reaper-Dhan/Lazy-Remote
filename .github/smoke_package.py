@@ -136,7 +136,8 @@ def smoke(process):
     assert session["status"] == 200
     credentials = {field: session[field] for field in ("token", "tab")}
     assert bluetooth("status", **credentials)["status"] == 200
-    assert bluetooth("cancel", **credentials)["status"] == 200
+    assert bluetooth("cancel", **credentials)["locked"] is True
+    assert bluetooth("cancel", **credentials)["locked"] is True  # lost-ack retry
     assert bluetooth("status", **credentials)["status"] == 401
 
 
