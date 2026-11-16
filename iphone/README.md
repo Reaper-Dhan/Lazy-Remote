@@ -35,3 +35,13 @@ xcodebuild -project "iphone/Lazy Remote.xcodeproj" -scheme "Lazy Remote" \
 ```
 
 CI also compiles for physical iOS hardware without signing. An unsigned build is not an installable IPA. A simulator compile cannot verify Bluetooth radio discovery, encryption prompts, physical input, or reconnection. Those checks require an iPhone and Mac and are still outstanding. Before releasing, test code and QR pairing, denied/expired approval, host and phone lock, Bluetooth off/on, app switching within and beyond the timeout, and a lost connection during typing.
+
+Run the native session regression harness on macOS (also run by CI):
+
+```bash
+swiftc -swift-version 5 -D DEBUG -parse-as-library iphone/RemoteConnection.swift \
+  test_iphone.swift -o .cache/test-iphone
+.cache/test-iphone
+```
+
+It exercises the real client’s response handling with a simulated transport: transient status failures retain credentials, controls wait behind status checks, backgrounding discards queued commands, and late approval replies cannot restore a locked session. Release builds exclude the simulated transport hooks.

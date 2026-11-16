@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CoreGraphics
 import Foundation
 import Combine
 
@@ -46,6 +47,13 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     @Published private(set) var approved = false
     @Published private(set) var swipes: [String] = []
     @Published private(set) var unavailable: [String] = []
+
+    #if DEBUG
+    // Test the session state machine without a physical Core Bluetooth link.
+    var testSend: (([String: Any]) -> Void)?
+    func testReply(_ response: [String: Any]) { acceptResponse(response) }
+    func testPoll() { check() }
+    #endif
 
     func scan() {
         guard !connecting else { return }
@@ -204,6 +212,13 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
                 self.unavailable = response["unavailable"] as? [String] ?? []
                 self.match = ""
                 self.status = self.ready ? "Connected by Bluetooth" : "Allow input access on the host."
+                self.error = ""
+            } else if response["status"] as? Int != 401 {
+                // A lost status reply is not a revocation. Keep this session's
+                // credentials so reconnect can resume within the host timeout.
+                self.ready = false
+                self.status = "Host unavailable. Reconnecting…"
+                self.error = response["error"] as? String ?? "Could not confirm host status."
             } else if response["approved"] as? Bool == true {
                 self.request("claim") { [weak self] result in
                     guard let self, result["status"] as? Int == 200 else { return }
@@ -226,13 +241,21 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     private func request(_ op: String, body: [String: Any]? = nil,
                          credentials: (String?, String?)? = nil, key: String? = nil,
                          completion: @escaping ([String: Any]) -> Void) {
-        guard connected, awaiting == nil, let peripheral, let input else { return }
+        guard connected, awaiting == nil else { return }
         let id = UUID().uuidString
         var message: [String: Any] = ["id": id, "op": op, "request_key": key ?? requestKey]
         if let value = credentials?.0 ?? token { message["token"] = value }
         if let value = credentials?.1 ?? tab { message["tab"] = value }
         if let pending { message["pending"] = pending }
         if let body { message["body"] = body }
+        #if DEBUG
+        if let testSend {
+            awaiting = (id, generation, completion)
+            testSend(message)
+            return
+        }
+        #endif
+        guard let peripheral, let input else { return }
         guard let data = try? JSONSerialization.data(withJSONObject: message), data.count < 8192 else { return }
         let packet = data + Data([10])
         let size = min(peripheral.maximumWriteValueLength(for: .withResponse), 512)
@@ -373,13 +396,17 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         while let end = buffer.firstIndex(of: 10) {
             let packet = buffer.subdata(in: 0..<end)
             buffer.removeSubrange(0...end)
-            guard let response = try? JSONSerialization.jsonObject(with: packet) as? [String: Any],
-                  let id = response["id"] as? String, id == awaiting?.id else { continue }
-            let callback = awaiting?.generation == generation ? awaiting?.completion : nil
-            awaiting = nil
-            timeout?.cancel()
-            callback?(response)
-            flushCommands()
+            guard let response = try? JSONSerialization.jsonObject(with: packet) as? [String: Any] else { continue }
+            acceptResponse(response)
         }
+    }
+
+    private func acceptResponse(_ response: [String: Any]) {
+        guard let id = response["id"] as? String, id == awaiting?.id else { return }
+        let callback = awaiting?.generation == generation ? awaiting?.completion : nil
+        awaiting = nil
+        timeout?.cancel()
+        callback?(response)
+        flushCommands()
     }
 }

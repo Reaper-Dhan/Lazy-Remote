@@ -125,6 +125,10 @@ jobs:
           xcodebuild -project "iphone/Lazy Remote.xcodeproj" -scheme "Lazy Remote"
           -sdk iphoneos -configuration Release -derivedDataPath "$RUNNER_TEMP/iphone-build"
           CODE_SIGNING_ALLOWED=NO build
+      - name: Verify native session recovery and lock races
+        run: |
+          swiftc -swift-version 5 -D DEBUG -parse-as-library iphone/RemoteConnection.swift test_iphone.swift -o "$RUNNER_TEMP/test-iphone"
+          "$RUNNER_TEMP/test-iphone"
 
   build-android-tv:
     needs: test
