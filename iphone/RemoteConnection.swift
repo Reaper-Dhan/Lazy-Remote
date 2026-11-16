@@ -44,6 +44,8 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     private var generation = 0
     private var queued: [[String: Any]] = []
     private var pendingLock: (key: String, token: String?, tab: String?)?
+    private var lockNeedsSend = false
+    @Published private(set) var locking = false
     @Published private(set) var approved = false
     @Published private(set) var swipes: [String] = []
     @Published private(set) var unavailable: [String] = []
@@ -71,6 +73,10 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
 
     func connect(_ device: Device) {
         guard !connecting else { return }
+        guard pendingLock == nil || peripheral?.identifier == device.id else {
+            error = "Confirm Lock on the previous host before choosing another host."
+            return
+        }
         connecting = true
         manager?.stopScan()
         if let previous = peripheral { manager?.cancelPeripheralConnection(previous) }
@@ -80,8 +86,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         buffer.removeAll()
         connected = false
         input = nil
-        pendingLock = nil
-        clearSession()
+        if pendingLock == nil { clearSession() }
         peripheral = device.peripheral
         peripheral?.delegate = self
         status = "Connecting…"
@@ -103,6 +108,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     }
 
     func pair(qr: String? = nil) {
+        guard pendingLock == nil else { error = "Confirm Lock before requesting access again."; return }
         var body: [String: Any] = ["remember": false]
         if let qr { body["qr"] = qr }
         else { body["code"] = pairingCode }
@@ -117,8 +123,12 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     }
 
     func lock() {
-        pendingLock = (requestKey, token, tab)
-        clearSession()
+        if pendingLock == nil {
+            pendingLock = (requestKey, token, tab)
+            clearSession()
+        }
+        locking = true
+        lockNeedsSend = true
         status = "Locking access…"
         flushCommands()
     }
@@ -128,20 +138,24 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         approved = false
         swipes = []
         unavailable = []
-        queued.removeAll()
-        movement?.cancel()
-        movement = nil
+        resetControls()
         token = nil
         tab = nil
         pending = nil
         match = ""
         ready = false
+        requestKey = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    private func resetControls() {
+        queued.removeAll()
+        movement?.cancel()
+        movement = nil
         drag = false
         cumulative = .zero
         sequence = 0
         delta = .zero
-        requestKey = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-            + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
     func command(_ body: [String: Any], allowHidden: Bool = false) {
@@ -163,10 +177,19 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     private func flushCommands() {
         guard connected, awaiting == nil else { return }
         if let lock = pendingLock {
-            pendingLock = nil
+            guard lockNeedsSend else { return }
+            lockNeedsSend = false
             request("cancel", credentials: (lock.token, lock.tab), key: lock.key) { [weak self] response in
-                self?.status = response["status"] as? Int == 200 ? "Access locked"
-                    : "Lock unconfirmed. Use Lock phone on the host."
+                guard let self else { return }
+                if response["status"] as? Int == 200 && response["locked"] as? Bool == true {
+                    self.pendingLock = nil
+                    self.lockNeedsSend = false
+                    self.locking = false
+                    self.error = ""
+                    self.status = "Access locked"
+                } else {
+                    self.status = "Lock unconfirmed. Retry Lock or use Lock phone on the host."
+                }
             }
             return
         }
@@ -220,6 +243,9 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
                 self.status = "Host unavailable. Reconnecting…"
                 self.error = response["error"] as? String ?? "Could not confirm host status."
             } else if response["approved"] as? Bool == true {
+                self.resetControls()
+                self.token = nil
+                self.tab = nil
                 self.request("claim") { [weak self] result in
                     guard let self, result["status"] as? Int == 200 else { return }
                     self.token = result["token"] as? String
@@ -227,6 +253,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
                     self.check()
                 }
             } else {
+                self.resetControls()
                 self.ready = false
                 self.approved = false
                 self.token = nil
@@ -363,6 +390,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         }
         connected = true
         connecting = false
+        if pendingLock != nil { lockNeedsSend = true }
         flushCommands()
         check()
         poll?.cancel()

@@ -275,6 +275,7 @@ class Remote:
         self.input_ready = None
         self.token = self.tab = None
         self.claim_receipt = None
+        self.cancelled_requests = []
         self.last_presence = 0
         self.drag_release_pending = False
         self.session_until = self.last_command = 0
@@ -486,18 +487,35 @@ class Remote:
             self.publish()
         self.flush_drag_release()
 
-    def cancel_request(self, request_key):
-        """Cancel this native client's pending approval or unconfirmed claim."""
+    def cancel_request(self, request_key, token=None, tab=None):
+        """Revoke this client's access and acknowledge retries of that same Lock."""
         with self.lock:
-            self.expire(time.monotonic())
+            now = time.monotonic()
+            self.expire(now)
             pending = self.pairing.request_for(None, request_key)
+            receipt = self.can_recover_claim(request_key)
+            cancelled = any(hmac.compare_digest(request_key, key)
+                            for key, until in self.cancelled_requests if until > now)
+            credentials = bool(token and tab)
+            if not (pending or receipt or cancelled or credentials):
+                raise RequestError(409, "Could not confirm which request to lock. Use Lock phone on the host.")
+            matches = (credentials and self.token is not None
+                       and hmac.compare_digest(token, self.token) and hmac.compare_digest(tab, self.tab))
+            changed = False
             if pending:
                 self.pairing.pending = None
-                self.pairing.generate(time.monotonic())
-            elif self.can_recover_claim(request_key):
+                changed = True
+            if receipt or matches:
                 self.revoke()
-                self.pairing.generate(time.monotonic())
-            self.publish()
+                changed = True
+            if changed:
+                self.pairing.generate(now)
+                self.publish()
+            # Credentials that don't match the active session prove that the
+            # supplied session is no longer active; never revoke another one.
+            self.cancelled_requests = [(key, until) for key, until in self.cancelled_requests
+                                       if until > now and not hmac.compare_digest(key, request_key)][-15:]
+            self.cancelled_requests.append((request_key, now + IDLE_LIFETIME))
         self.flush_drag_release()
 
     def command(self, token, tab, command):

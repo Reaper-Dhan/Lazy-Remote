@@ -564,7 +564,7 @@ class BluetoothSecurityTests(unittest.TestCase):
 
     def test_lock_cancels_pending_approval_or_unconfirmed_claim(self):
         self.request("pair", body={"code": self.code})
-        self.request("cancel", key="b" * 64)
+        self.assertEqual(self.request("cancel", key="b" * 64)["status"], 409)
         self.assertIsNotNone(self.remote.pairing.pending)
         self.request("cancel")
         self.assertIsNone(self.remote.pairing.pending)
@@ -579,6 +579,25 @@ class BluetoothSecurityTests(unittest.TestCase):
         self.request("status", **session)
         self.request("cancel", **session)
         self.assertIsNone(self.remote.token)
+
+    def test_lock_acknowledgements_identify_the_target_and_allow_retries(self):
+        session = self.pair()
+        self.request("status", **session)
+        self.assertEqual(self.request("cancel", key="b" * 64)["status"], 409)
+        self.assertEqual(self.request("status", **session)["status"], 200)
+        self.assertTrue(self.request("cancel", **session)["locked"])
+        self.assertTrue(self.request("cancel", **session)["locked"])
+        self.assertEqual(self.request("status", **session)["status"], 401)
+
+    def test_retry_of_cancelled_approval_does_not_revoke_another_session(self):
+        self.request("pair", body={"code": self.code})
+        self.assertTrue(self.request("cancel")["locked"])
+        self.code = self.remote.pairing.code
+        self.key = "b" * 64
+        other = self.pair()
+        self.request("status", **other)
+        self.assertTrue(self.request("cancel", key="a" * 64)["locked"])
+        self.assertEqual(self.request("status", **other)["status"], 200)
 
     def test_invalid_or_oversized_frames_never_reach_controls(self):
         from bluetooth_transport import local_request

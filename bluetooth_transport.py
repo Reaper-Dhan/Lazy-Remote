@@ -46,14 +46,8 @@ def dispatch(remote, message):
             remote.disconnect(values["token"], values["tab"])
             status, result = 200, {"ok": True}
         elif operation == "cancel":
-            if values["token"] and values["tab"]:
-                try:
-                    remote.disconnect(values["token"], values["tab"])
-                except RequestError as error:
-                    if error.status != 401:
-                        raise
-            remote.cancel_request(key)
-            status, result = 200, {"ok": True}
+            remote.cancel_request(key, values["token"], values["tab"])
+            status, result = 200, {"ok": True, "locked": True}
         else:
             raise RequestError(404, "Unknown Bluetooth operation.")
     except RequestError as error:
