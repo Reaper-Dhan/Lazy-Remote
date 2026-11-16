@@ -25,8 +25,10 @@ KEEP_RUNNING = default_state_dir() / ".keep-running"
 ALLOW_BACKGROUND = default_state_dir() / ".allow-background-resume"
 
 
-def server_command(keep_running=False, allow_background=False):
+def server_command(keep_running=False, allow_background=False, bind_address=""):
     extra = []
+    if bind := bind_address.strip():
+        extra.extend(("--bind", bind))
     if keep_running:
         extra.append("--keep-running")
     if allow_background:
@@ -79,6 +81,7 @@ class App:
         self.guide = None
         self.show_code = tk.BooleanVar(value=False)
         self.address = tk.StringVar()
+        self.bind_address = tk.StringVar()
         self.keep_running = tk.BooleanVar(value=KEEP_RUNNING.exists())
         self.allow_background = tk.BooleanVar(value=ALLOW_BACKGROUND.exists())
         self.reset_state()
@@ -128,7 +131,8 @@ class App:
         flags = 0x08000000 if IS_WINDOWS else 0  # CREATE_NO_WINDOW: no console window.
         try:
             self.process = subprocess.Popen(
-                server_command(self.keep_running.get(), self.allow_background.get()), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                server_command(self.keep_running.get(), self.allow_background.get(), self.bind_address.get()),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, creationflags=flags,
             )
         except OSError as error:
@@ -278,11 +282,12 @@ class App:
         if self.phase == "stopped":
             intro = self.card(body)
             self.label(intro, "Your phone is the remote", "Title.TLabel")
-            self.label(intro, "Use it as a trackpad, keyboard, and media controller on your Wi-Fi.",
+            self.label(intro, "Use it as a trackpad, keyboard, and media controller on your local network.",
                        "Muted.TLabel", pady=(5, 12))
             ttk.Button(intro, text="Start server", command=self.start, style="Primary.TButton").pack(anchor="w")
             settings = self.card(body)
-            self.label(settings, "Session settings", "Head.TLabel")
+            self.label(settings, "Connection and session settings", "Head.TLabel")
+            self.network_setting(settings)
             ttk.Checkbutton(settings, text="Keep running when the phone is idle", variable=self.keep_running,
                             command=lambda: self.save_setting(KEEP_RUNNING, self.keep_running.get())).pack(anchor="w", pady=(8, 0))
             self.label(settings, "The server stays on until you stop it. The phone still locks after 5 minutes."
@@ -341,6 +346,12 @@ class App:
         ).pack(anchor="w", pady=(8, 0))
         self.label(parent, "Resume the same tab within one minute, or up to five minutes with this on.",
                    "Muted.TLabel")
+
+    def network_setting(self, parent):
+        self.label(parent, "Host IPv4 address", pady=(8, 2))
+        self.ttk.Entry(parent, textvariable=self.bind_address, width=25).pack(anchor="w")
+        self.label(parent, "For Bluetooth tethering, enter this PC’s IPv4 address on the Bluetooth network. "
+                           "Leave blank for automatic selection.", "Muted.TLabel")
 
     def copy_address(self):
         self.root.clipboard_clear()
@@ -437,6 +448,7 @@ class App:
 
         step(1, "Start the server")
         if self.phase == "stopped":
+            self.network_setting(frame)
             ttk.Button(frame, text="Start server", command=self.start, style="Primary.TButton").pack(anchor="w", pady=4)
             self.background_setting(frame)
         self.label(frame, "Starting the server creates this PC’s certificate. "
@@ -499,8 +511,8 @@ class App:
             self.label(frame, "Transfer the profile or certificate directly to your own phone.", "Muted.TLabel")
 
         step(4, "Pair your phone")
-        self.label(frame, "Join the same Wi-Fi. Open the phone address to install Lazy Remote, or scan the pairing QR. "
-                          "Approve the request on this computer.")
+        self.label(frame, "Connect both devices to the same network. Open the phone address or scan the pairing QR, "
+                          "then approve on this computer.")
         ttk.Button(frame, text="Done", command=self.guide.destroy).pack(anchor="e", pady=(12, 0))
 
 

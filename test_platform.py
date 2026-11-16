@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import input_backends
+import platform_support
 from input_backends import KEYMAP, InputBackend, LinuxInput, WindowsInput
 from server import KEYS, SWIPE_SHORTCUTS, LocalInput
 from auth import RequestError
@@ -312,6 +313,16 @@ class FactoryTests(unittest.TestCase):
         command = desktop_launcher.server_command()
         self.assertEqual(Path(command[-2]).name, "server.py")
         self.assertEqual(command[-1], "--launcher")
+
+    def test_launcher_passes_selected_bluetooth_network_address(self):
+        import desktop_launcher
+        command = desktop_launcher.server_command(bind_address=" 172.20.10.2 ")
+        self.assertEqual(command[-2:], ["--bind", "172.20.10.2"])
+        with patch.dict(os.environ, {"REMOTE_BIND": "192.168.1.12"}):
+            self.assertEqual(platform_support.local_endpoints("172.20.10.2")[0], "172.20.10.2")
+            self.assertEqual(platform_support.local_endpoints()[0], "192.168.1.12")
+            with self.assertRaises(ValueError):
+                platform_support.local_endpoints("0.0.0.0")
 
     def test_linux_setup_rule_uses_seat_access(self):
         self.assertIn('TAG+="uaccess"', input_backends.LINUX_SETUP)

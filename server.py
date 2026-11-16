@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
@@ -850,6 +851,7 @@ class LocalInput:
 
 def main():
     parser = argparse.ArgumentParser(description="Control this computer from one paired browser over HTTPS.")
+    parser.add_argument("--bind", metavar="IPV4", help="Listen on this host's private IPv4 address.")
     parser.add_argument("--renew-certificate", action="store_true", help="Replace this computer's HTTPS identity.")
     parser.add_argument("--keep-running", action="store_true",
                         help="Do not stop after 30 minutes without phone activity. The phone still locks after 5.")
@@ -867,8 +869,14 @@ def main():
         port = int(os.environ.get("REMOTE_PORT", "8765"))
         if not 0 <= port <= 65535:
             raise ValueError("REMOTE_PORT must be between 0 and 65535.")
-        address, hostname = local_endpoints()
-        server = RemoteServer((address, port))
+        address, hostname = local_endpoints(args.bind)
+        try:
+            server = RemoteServer((address, port))
+        except OSError as error:
+            if error.errno == errno.EADDRNOTAVAIL or getattr(error, "winerror", None) == 10049:
+                raise ValueError(f"{address} is not assigned to this {HOST_NAME}. "
+                                 "Connect to the network first, then check the host IPv4 address.") from None
+            raise
         port = server.server_address[1]
         state = private_state_dir(args.state_dir)
         instance = (state / "instance.lock").open("a")

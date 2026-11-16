@@ -39,6 +39,7 @@ private final class Launcher: ObservableObject {
     @Published private(set) var phase = Phase.stopped
     @Published private(set) var urls: [String] = []
     @Published var address = ""
+    @Published var bindAddress = ""
     @Published private(set) var code: String?
     @Published private(set) var qr: String?
     @Published private(set) var match: String?
@@ -124,6 +125,8 @@ private final class Launcher: ObservableObject {
         let output = Pipe()
         server.executableURL = URL(fileURLWithPath: python)
         var arguments = ["-E", "-s", "-B", "-u", script.path, "--launcher"]
+        let bind = bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !bind.isEmpty { arguments += ["--bind", bind] }
         if keepRunning { arguments.append("--keep-running") }
         if allowBackgroundResume { arguments.append("--allow-background-resume") }
         server.arguments = arguments
@@ -273,6 +276,19 @@ private struct PairingQR: View {
     }
 }
 
+private struct NetworkAddressField: View {
+    @Binding var address: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Host IPv4 address").font(.subheadline.weight(.semibold))
+            TextField("Host IPv4 address", text: $address, prompt: Text("Automatic"))
+            Text("For Bluetooth tethering, enter this Mac’s IPv4 address on the Bluetooth network. Leave blank for automatic selection.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct SetupGuide: View {
     @ObservedObject var launcher: Launcher
     @Environment(\.dismiss) private var dismiss
@@ -284,6 +300,7 @@ private struct SetupGuide: View {
 
             step(1, "Start the server") {
                 if launcher.phase == .stopped {
+                    NetworkAddressField(address: $launcher.bindAddress)
                     Button("Start server", action: launcher.start).buttonStyle(.borderedProminent)
                     Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)
                     Text("Resume the same tab within one minute, or up to five minutes with this on.")
@@ -344,7 +361,7 @@ private struct SetupGuide: View {
             }
 
             step(4, "Pair your phone") {
-                Text("Join the same Wi-Fi. Open the phone address to install Lazy Remote, or scan the pairing QR. Approve the request on this Mac.")
+                Text("Connect both devices to the same network. Open the phone address or scan the pairing QR, then approve on this Mac.")
             }
 
             HStack {
@@ -485,7 +502,7 @@ private struct LauncherView: View {
             Label("Your phone is the remote", systemImage: "iphone.and.arrow.forward")
                 .font(.title2.bold())
                 .foregroundStyle(.white)
-            Text("Use it as a trackpad, keyboard, and media controller on your Wi-Fi.")
+            Text("Use it as a trackpad, keyboard, and media controller on your local network.")
                 .foregroundStyle(Color.white.opacity(0.78))
                 .fixedSize(horizontal: false, vertical: true)
             Button("Start server", action: launcher.start)
@@ -501,8 +518,10 @@ private struct LauncherView: View {
     }
 
     private var sessionSettings: some View {
-        DisclosureGroup("Session settings", isExpanded: $showSettings) {
+        DisclosureGroup("Connection and session settings", isExpanded: $showSettings) {
             VStack(alignment: .leading, spacing: 12) {
+                NetworkAddressField(address: $launcher.bindAddress)
+                Divider()
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)
                     Text("Resume the same tab within one minute, or up to five minutes with this on.")

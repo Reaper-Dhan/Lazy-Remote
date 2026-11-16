@@ -51,10 +51,13 @@ else:
 
 
 def private_ipv4(value):
-    address = ipaddress.IPv4Address(value)
-    if address == ipaddress.IPv4Address("127.0.0.1") or any(address in network for network in LAN_NETWORKS):
-        return str(address)
-    raise ValueError("REMOTE_BIND must be a private IPv4 address or 127.0.0.1.")
+    try:
+        address = ipaddress.IPv4Address(value)
+        if address == ipaddress.IPv4Address("127.0.0.1") or any(address in network for network in LAN_NETWORKS):
+            return str(address)
+    except ipaddress.AddressValueError:
+        pass
+    raise ValueError("Enter the host's private IPv4 address, such as 192.168.1.12.")
 
 
 def _mac_address():
@@ -95,9 +98,10 @@ def _mac_hostname():
     return f"{name}.local" if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name) else None
 
 
-def local_endpoints():
-    bind = os.environ.get("REMOTE_BIND")
-    if bind:
+def local_endpoints(bind=None):
+    if bind is None:
+        bind = os.environ.get("REMOTE_BIND") or None
+    if bind is not None:
         address = private_ipv4(bind)
     else:
         address = _mac_address() if IS_MAC else _routed_address()

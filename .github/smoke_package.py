@@ -109,8 +109,8 @@ def smoke(process):
 
 def main(command):
     with tempfile.TemporaryDirectory() as directory:
-        environment = {**os.environ, "REMOTE_BIND": "127.0.0.1", "REMOTE_PORT": "0"}
-        with subprocess.Popen([*command, "--launcher", "--state-dir", str(Path(directory) / "state")],
+        environment = {**os.environ, "REMOTE_BIND": "0.0.0.0", "REMOTE_PORT": "0"}
+        with subprocess.Popen([*command, "--launcher", "--bind", "127.0.0.1", "--state-dir", str(Path(directory) / "state")],
                               env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               text=True, encoding="utf-8") as process:
             try:
