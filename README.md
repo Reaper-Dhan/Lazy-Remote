@@ -41,7 +41,19 @@ The server runs while you use other TV apps. It stops when the TV screen switche
 
 If Android refuses to update an earlier preview because the APK signatures differ, uninstall the old preview before installing this one. Uninstalling clears its pairing state. If you installed the first TV preview, save the updated certificates from the TV after starting this version. Remove the old TV trust profile or certificate from your phone and install the new one.
 
-Connect your computer and phone to the same private Wi-Fi network.
+Connect your computer and phone to the same private network.
+
+### Use Bluetooth tethering without Wi-Fi
+
+Lazy Remote can use an IP connection carried over Bluetooth. It keeps the same browser remote, HTTPS certificate, and approval on the host.
+
+1. On your phone, enable Bluetooth tethering or Personal Hotspot. Join that hotspot **over Bluetooth** from the computer. On an iPhone, Personal Hotspot requires a cellular plan that supports tethering. See [Apple’s Bluetooth hotspot instructions](https://support.apple.com/guide/iphone/share-your-internet-connection-iph45447ca6/27/ios/27) and [Microsoft’s Bluetooth network instructions](https://support.microsoft.com/en-gb/windows/hardware/bluetooth/connect-to-a-bluetooth-network-in-windows).
+2. Start Lazy Remote after the Bluetooth network connects. If the phone address still points to another connection, stop the server and open **Connection and session settings**. Enter the **host’s IPv4 address** on the Bluetooth network in **Host IPv4 address**, then start the server. Look for the Bluetooth network adapter in system network settings. On Windows you can also use `ipconfig`, and on Linux `ip -4 address`.
+3. Open the new numeric HTTPS address shown by Lazy Remote on the phone and approve the connection on the host. An already trusted certificate root works across address changes. A new browser address can require pairing again.
+
+On Linux, the desktop must support joining a Bluetooth Personal Area Network. On Android TV, the hardware and firmware must expose a Bluetooth network connection as the TV’s active network. Bluetooth pairing alone does not create that connection.
+
+The iPhone browser remote uses this Bluetooth network connection. Direct Bluetooth Low Energy control without tethering would require a native iPhone app.
 
 ### Linux input access
 
@@ -123,11 +135,11 @@ If you discover a security issue, use GitHub’s private vulnerability reporting
 
 | Symptom | Try this |
 | --- | --- |
-| The phone can’t reach the `.local` address | Make sure both devices are on the same Wi-Fi network. Select the numeric address in the launcher if it’s available. Guest Wi-Fi may block communication between devices. |
-| The address changed after switching Wi-Fi | Restart the server and open the new numeric address. If the browser asks, scan the new pairing QR code. |
+| The phone can’t reach the `.local` address | Make sure both devices are on the same network. Select the numeric address in the launcher, especially on a Bluetooth connection. Guest Wi-Fi may block communication between devices. |
+| The address changed after switching networks | Restart the server and open the new numeric address. Update the host IPv4 address in the launcher if you set it manually. If the browser asks, scan the new pairing QR code. |
 | The browser shows a certificate warning | Confirm you opened the exact address displayed by Lazy Remote and installed the current certificate from your computer. On iOS, check **Certificate Trust Settings** as well. |
 | The page connects but can’t move the cursor or type | Mac: use **Open Accessibility Settings** in the launcher and allow the app or helper named by macOS. Linux: unlock the active desktop, confirm it reports lock state, then check `/dev/uinput` access in the setup guide. |
-| The phone can’t reach a Windows PC | Allow Lazy Remote on **Private networks** in **Windows Security → Firewall & network protection → Allow an app through firewall**, and make sure the Wi-Fi network profile is set to **Private**. |
+| The phone can’t reach a Windows PC | Allow Lazy Remote on **Private networks** in **Windows Security → Firewall & network protection → Allow an app through firewall**. Set the profile for your trusted network to **Private** if Windows marked it **Public**. |
 | A three-finger swipe has no effect | On the phone, tap **Mac swipes** above the trackpad and swipe with one finger. If the button is missing, check the Mac’s gesture and keyboard shortcut settings. |
 
 ## Development
@@ -166,7 +178,7 @@ The phone scanner bundles [jsQR 1.4.0](https://github.com/cozmo/jsQR) under the 
 | [android-tv/](android-tv/) | Android TV host app, certificate generation, and TV button output |
 | [index.html](index.html), [remote.js](remote.js), [remote.css](remote.css) | Mobile browser interface |
 
-**Terminal mode.** Run `./"Start Remote.command"` on a Mac, or `python3 server.py` on any system, to start the server in a terminal. Use the printed `approve` or `deny` command and matching number. Press **Enter** on its own to forget the browser and generate a new code, or **Ctrl+C** to stop. Set `REMOTE_BIND` to choose a private IPv4 interface or `REMOTE_PORT` to override port 8765. Windows and Linux need `pip install cryptography` for terminal mode unless `openssl` is installed.
+**Terminal mode.** Run `./"Start Remote.command"` on a Mac, or `python3 server.py` on any system, to start the server in a terminal. Use the printed `approve` or `deny` command and matching number. Press **Enter** on its own to forget the browser and generate a new code, or **Ctrl+C** to stop. Use `python3 server.py --bind IPV4` or set `REMOTE_BIND` to choose a private host address. Set `REMOTE_PORT` to override port 8765. Windows and Linux need `pip install cryptography` for terminal mode unless `openssl` is installed.
 
 ## License
 
