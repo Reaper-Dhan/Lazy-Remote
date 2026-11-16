@@ -131,6 +131,7 @@ On macOS 27, switching Spaces briefly opens Mission Control and selects the neig
 ## Security
 
 - The network server listens on one private IPv4 address. Direct Bluetooth mode binds the HTTP server to loopback and requires encrypted Bluetooth characteristics plus the same host approval, session expiry, and command validation. Bluetooth pairing is separate from approval and is not a passkey.
+- HTTP headers and body share a five-second absolute read deadline. Dribbling bytes cannot keep an incomplete request alive by resetting an idle timeout.
 - In network mode, use Lazy Remote on a network you trust and keep its port off the public internet.
 - Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the computer.
 - **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the computer.

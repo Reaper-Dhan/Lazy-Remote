@@ -18,7 +18,9 @@ The preview includes pointer movement, tap/left/right click, scroll buttons, tex
 
 Controls are serialized so status checks cannot discard a button press. Disconnects drop unconfirmed control commands instead of replaying clicks or typing. An approved session reconnects while its host timeout permits; no access is remembered across process restarts. Backgrounding pauses controls. The same host inactivity limits apply as the browser remote.
 
-**Lock** cancels a pending request or revokes an approved session. If the connection drops before the host confirms the lock, use **Lock phone** on the Mac. Do not assume an offline phone can revoke access immediately.
+**Lock** cancels a pending request or revokes an approved session. The phone retains the original revocation credentials until the host confirms that specific Lock. If the reply is lost, tap **Retry Lock** or reconnect to the same host; it will retry without restoring controls. A generic successful response is not treated as proof of revocation. **Lock phone** on the Mac also ends access immediately. An offline phone cannot confirm a lock.
+
+Connecting, service discovery, and Bluetooth pairing have a combined 30-second deadline. Use **Cancel connection** to stop a pending attempt and choose a host again. Cancellation stops automatic reconnects; it does not claim to revoke an approved host session. Normal connection loss still reconnects within the host’s session timeout. Queued controls and cumulative motion are discarded when the host expires a session, so fresh approval cannot replay old input.
 
 ## Transport and verification
 
@@ -44,4 +46,13 @@ swiftc -swift-version 5 -D DEBUG -parse-as-library iphone/RemoteConnection.swift
 .cache/test-iphone
 ```
 
-It exercises the real client’s response handling with a simulated transport: transient status failures retain credentials, controls wait behind status checks, backgrounding discards queued commands, and late approval replies cannot restore a locked session. Release builds exclude the simulated transport hooks.
+It exercises the real client’s response handling with a simulated transport: transient status failures retain credentials, controls wait behind status checks, backgrounding and session expiry discard queued commands, lost Lock acknowledgements remain retryable, and late approval replies cannot restore a locked session. It also checks connection timeout and cancellation. Release builds exclude the simulated transport hooks.
+
+The Mac Bluetooth transaction tests run without requesting Bluetooth access:
+
+```bash
+swiftc -swift-version 5 -parse-as-library BluetoothHost.swift test_bluetooth.swift -o .cache/test-bluetooth
+.cache/test-bluetooth
+```
+
+These cover fragmented and long writes, atomic rejection of invalid batches, frame limits, and prevention of partial command delivery. The host acknowledges each ATT write batch once, after validating the complete batch.
