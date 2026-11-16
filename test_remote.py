@@ -181,17 +181,18 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status", cookie=cookie)[0], 401)
         self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "space"}, cookie=cookie)[0], 401)
         self.tabs[cookie] = tab
+        self.remote.last_presence -= 30
         self.assertEqual(self.request("/api/status", cookie=cookie)[0], 200)
         self.remote.last_presence -= PRESENCE_LIFETIME
         self.assertEqual(self.request("/api/status", cookie=cookie)[0], 401)
 
-    def test_background_opt_out_keeps_tab_approved(self):
-        self.remote.protect_background = False
+    def test_extended_reconnect_window_still_expires(self):
+        self.remote.presence_lifetime = IDLE_LIFETIME
         cookie = self.pair().split(";", 1)[0]
         self.remote.last_presence -= PRESENCE_LIFETIME
-        status, _, body = self.request("/api/status", cookie=cookie)
-        self.assertEqual(status, 200)
-        self.assertFalse(json.loads(body)["protect_background"])
+        self.assertEqual(self.request("/api/status", cookie=cookie)[0], 200)
+        self.remote.last_presence -= IDLE_LIFETIME
+        self.assertEqual(self.request("/api/status", cookie=cookie)[0], 401)
 
     def test_reloaded_remembered_browser_can_request_a_new_session(self):
         pending = self.begin({"code": self.code, "remember": True})

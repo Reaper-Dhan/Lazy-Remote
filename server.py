@@ -41,7 +41,7 @@ IDLE_LIFETIME = 5 * 60
 SERVER_IDLE_TIMEOUT = 30 * 60
 SERVER_IDLE_MESSAGE = "Server stopped after 30 minutes without phone activity."
 SESSION_LIFETIME = 12 * 60 * 60
-PRESENCE_LIFETIME = 15
+PRESENCE_LIFETIME = 60
 TAB_HEADER = "X-Lazy-Remote-Tab"
 DRAG_LIFETIME = 15
 MAX_BODY = 4096
@@ -256,14 +256,14 @@ class InputBridge:
 
 class Remote:
     def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None,
-                 stop_when_idle=True, protect_background=True):
+                 stop_when_idle=True, presence_lifetime=PRESENCE_LIFETIME):
         self.bridge = bridge
         self.pairing = Pairing(browser_path)
         self.on_change = on_change
         self.gesture_reader = gesture_reader
         self.stop_when_idle = stop_when_idle
         self.gestures = gesture_reader() if gesture_reader else DEFAULT_GESTURES
-        self.protect_background = protect_background
+        self.presence_lifetime = presence_lifetime
         self.motion = (0, 0, 0)
         self.lock = threading.Lock()
         self.input_lock = threading.Lock()
@@ -389,7 +389,7 @@ class Remote:
             raise RequestError(503, SERVER_IDLE_MESSAGE)
         changed = self.pairing.expire(now)
         if self.token and (now >= self.session_until or now - self.last_command >= IDLE_LIFETIME
-                           or self.protect_background and now - self.last_presence >= PRESENCE_LIFETIME):
+                           or now - self.last_presence >= self.presence_lifetime):
             self.revoke()
             if not self.pairing.browser.active():
                 self.pairing.generate(now)
@@ -429,7 +429,8 @@ class Remote:
             gestures = {**self.gestures, "swipes": list(self.gestures["swipes"])}
             return 200, {
                 "ready": ready, "dragging": bool(self.drag_until), "gestures": gestures,
-                "protect_background": self.protect_background,
+                # Older open pages use this flag to decide whether to disconnect on hide.
+                "protect_background": False,
                 "unavailable": list(getattr(self.bridge, "unavailable_keys", ())),
             }
 
@@ -727,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
                 cookies = [(COOKIE, token, None), (APPROVAL_COOKIE, "", APPROVAL_LIFETIME)]
                 if device is not None:
                     cookies.append((DEVICE_COOKIE, device, DEVICE_LIFETIME))
-                self.json_reply(200, {"ok": True, "tab": tab, "protect_background": remote.protect_background},
+                self.json_reply(200, {"ok": True, "tab": tab, "protect_background": False},
                                 cookies=cookies)
             else:
                 remote.disconnect(self.token(), self.tab())
@@ -813,7 +814,7 @@ def main():
     parser.add_argument("--keep-running", action="store_true",
                         help="Do not stop after 30 minutes without phone activity. The phone still locks after 5.")
     parser.add_argument("--allow-background-resume", action="store_true",
-                        help="Keep an approved tab usable when it returns to the foreground.")
+                        help="Allow up to five minutes between check-ins instead of one minute.")
     parser.add_argument("--state-dir", type=Path, default=STATE_DIR, help=argparse.SUPPRESS)
     parser.add_argument("--launcher", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -841,7 +842,7 @@ def main():
         remote = server.remote = Remote(
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
             gesture_reader=mac_gesture_settings if IS_MAC else None, stop_when_idle=not args.keep_running,
-            protect_background=not args.allow_background_resume,
+            presence_lifetime=IDLE_LIFETIME if args.allow_background_resume else PRESENCE_LIFETIME,
         )
         code = remote.new_code(publish=False)
         urls = [f"https://{name}{f':{port}' if port != 443 else ''}/" for name in names]
