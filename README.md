@@ -39,7 +39,7 @@ Use the TV preview APK from the `Android-TV-preview` [GitHub Actions artifact](h
 
 The server runs while you use other TV apps. It stops when the TV screen switches off or after 30 minutes without phone activity. If the TV changes networks, stop and start Lazy Remote and use the address shown on the TV.
 
-If you installed the first TV preview, save the updated certificates from the TV after starting this version. Remove the old TV trust profile or certificate from your phone and install the new one.
+If Android refuses to update an earlier preview because the APK signatures differ, uninstall the old preview before installing this one. Uninstalling clears its pairing state. If you installed the first TV preview, save the updated certificates from the TV after starting this version. Remove the old TV trust profile or certificate from your phone and install the new one.
 
 Connect your computer and phone to the same private Wi-Fi network.
 
