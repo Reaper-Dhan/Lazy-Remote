@@ -369,7 +369,6 @@ private struct SetupGuide: View {
 
             step(1, "Start the server") {
                 if launcher.phase == .stopped {
-                    Toggle("Direct Bluetooth with the iPhone app", isOn: $launcher.directBluetooth)
                     NetworkAddressField(address: $launcher.bindAddress)
                         .disabled(launcher.directBluetooth)
                     Button("Start server", action: launcher.start).buttonStyle(.borderedProminent)
@@ -550,7 +549,10 @@ private struct LauncherView: View {
         }
         .padding(22)
         .frame(width: 560, alignment: .leading)
-        .sheet(isPresented: $showGuide) { SetupGuide(launcher: launcher) }
+        .sheet(isPresented: $showGuide) {
+            if launcher.directBluetooth { BluetoothSetupGuide() }
+            else { SetupGuide(launcher: launcher) }
+        }
         .sheet(isPresented: $showBluetooth) { BluetoothSetupGuide() }
         .onAppear { launcher.showWindow = { openWindow(id: "launcher") } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -589,7 +591,9 @@ private struct LauncherView: View {
             Label("Your phone is the remote", systemImage: "iphone.and.arrow.forward")
                 .font(.title2.bold())
                 .foregroundStyle(.white)
-            Text("Use it as a trackpad, keyboard, and media controller on your local network.")
+            Text(launcher.directBluetooth
+                 ? "Use the native iPhone app as a trackpad, keyboard, and media controller over Bluetooth."
+                 : "Use it as a trackpad, keyboard, and media controller on your local network.")
                 .foregroundStyle(Color.white.opacity(0.78))
                 .fixedSize(horizontal: false, vertical: true)
             Button("Start server", action: launcher.start)
@@ -698,7 +702,9 @@ private struct LauncherView: View {
                 PairingQR(payload: launcher.address + "#pair=" + qr)
                 VStack(alignment: .leading, spacing: 9) {
                     Text("Scan to pair").font(.headline)
-                    Text(launcher.remembered
+                    Text(launcher.directBluetooth
+                         ? "Scan inside the native iPhone app, or enter the code below. Approve the matching number here."
+                         : launcher.remembered
                          ? "Open the same address to reconnect, or scan to pair at this address."
                          : "Tap Scan pairing QR in the phone app, or use your phone camera. Approve the request here.")
                         .foregroundStyle(.secondary)
