@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.concurrent.Executors;
 
 public final class TvActivity extends Activity {
@@ -173,7 +174,7 @@ public final class TvActivity extends Activity {
     private void exportCertificates() {
         TvRuntime runtime = TvRuntime.current;
         if (runtime == null || runtime.certificates == null || exporting) return;
-        Path files = Path.of(runtime.certificates);
+        Path files = Paths.get(runtime.certificates);
         exporting = true;
         var executor = Executors.newSingleThreadExecutor();
         executor.execute(() -> {
