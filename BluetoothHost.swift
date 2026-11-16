@@ -6,13 +6,48 @@ let remoteBluetoothService = CBUUID(string: "6C617A79-5265-4D6F-7465-00000000000
 let remoteBluetoothInput = CBUUID(string: "6C617A79-5265-4D6F-7465-000000000002")
 let remoteBluetoothOutput = CBUUID(string: "6C617A79-5265-4D6F-7465-000000000003")
 
+/// Stage an entire ATT transaction before changing the stream or forwarding input.
+struct BluetoothWriteBuffer {
+    struct Fragment { let offset: Int; let value: Data }
+    struct Packet { let id: String; let data: Data }
+    enum Failure: Error { case invalidOffset, tooLarge, invalidPacket, busy }
+    private(set) var data = Data()
+
+    mutating func reset() { data.removeAll() }
+
+    mutating func accept(_ fragments: [Fragment]) throws -> Packet? {
+        var staged = data
+        var offset = 0
+        for fragment in fragments {
+            if fragment.offset == 0 { offset = 0 }
+            guard fragment.offset == offset else { throw Failure.invalidOffset }
+            guard staged.count + fragment.value.count <= 8192 else { throw Failure.tooLarge }
+            staged.append(fragment.value)
+            offset += fragment.value.count
+        }
+        var packet: Packet?
+        while let end = staged.firstIndex(of: 10) {
+            guard packet == nil else { throw Failure.busy }
+            let message = staged.subdata(in: 0..<end)
+            staged.removeSubrange(0...end)
+            guard let body = try? JSONSerialization.jsonObject(with: message) as? [String: Any],
+                  let id = body["id"] as? String,
+                  id.range(of: "^[A-Za-z0-9-]{1,64}$", options: .regularExpression) != nil
+            else { throw Failure.invalidPacket }
+            packet = Packet(id: id, data: message)
+        }
+        data = staged
+        return packet
+    }
+}
+
 final class BluetoothHost: NSObject, ObservableObject, CBPeripheralManagerDelegate {
     @Published var status = "Bluetooth stopped"
     var receive: ((String) -> Void)?
     private var manager: CBPeripheralManager?
     private var central: CBCentral?
     private var output: CBMutableCharacteristic?
-    private var incoming = Data()
+    private var incoming = BluetoothWriteBuffer()
     private var outgoing: [Data] = []
     private var enabled = false
     private var origins: [String: UUID] = [:]
@@ -29,7 +64,7 @@ final class BluetoothHost: NSObject, ObservableObject, CBPeripheralManagerDelega
         manager?.removeAllServices()
         central = nil
         output = nil
-        incoming.removeAll()
+        incoming.reset()
         outgoing.removeAll()
         origins.removeAll()
         status = "Bluetooth stopped"
@@ -53,7 +88,7 @@ final class BluetoothHost: NSObject, ObservableObject, CBPeripheralManagerDelega
     private func publish() {
         guard enabled, let manager, manager.state == .poweredOn else { return }
         central = nil
-        incoming.removeAll()
+        incoming.reset()
         outgoing.removeAll()
         origins.removeAll()
         manager.removeAllServices()
@@ -71,7 +106,7 @@ final class BluetoothHost: NSObject, ObservableObject, CBPeripheralManagerDelega
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         if peripheral.state != .poweredOn {
             central = nil
-            incoming.removeAll()
+            incoming.reset()
             outgoing.removeAll()
             origins.removeAll()
         }
@@ -105,38 +140,38 @@ final class BluetoothHost: NSObject, ObservableObject, CBPeripheralManagerDelega
                            didUnsubscribeFrom characteristic: CBCharacteristic) {
         guard self.central?.identifier == central.identifier else { return }
         self.central = nil
-        incoming.removeAll()
+        incoming.reset()
         outgoing.removeAll()
         origins.removeAll()
         status = "Waiting for the iPhone to reconnect."
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite writes: [CBATTRequest]) {
-        for request in writes {
-            guard central?.identifier == request.central.identifier else {
-                peripheral.respond(to: request, withResult: .insufficientAuthorization)
-                continue
+        guard let first = writes.first else { return }
+        guard let central, writes.allSatisfy({ $0.central.identifier == central.identifier }) else {
+            peripheral.respond(to: first, withResult: .insufficientAuthorization)
+            return
+        }
+        guard enabled, origins.isEmpty,
+              writes.allSatisfy({ $0.characteristic.uuid == remoteBluetoothInput && $0.value != nil }) else {
+            peripheral.respond(to: first, withResult: .unlikelyError)
+            return
+        }
+        do {
+            let fragments = writes.map { BluetoothWriteBuffer.Fragment(offset: $0.offset, value: $0.value!) }
+            let packet = try incoming.accept(fragments)
+            // Core Bluetooth requires one acknowledgement for the whole batch.
+            peripheral.respond(to: first, withResult: .success)
+            if let packet {
+                origins[packet.id] = central.identifier
+                receive?(packet.data.base64EncodedString())
             }
-            guard enabled, request.characteristic.uuid == remoteBluetoothInput,
-                  request.offset == 0, let value = request.value,
-                  incoming.count + value.count <= 8192, origins.isEmpty else {
-                incoming.removeAll()
-                peripheral.respond(to: request, withResult: .unlikelyError)
-                continue
-            }
-            incoming.append(value)
-            peripheral.respond(to: request, withResult: .success)
-            while let end = incoming.firstIndex(of: 10) {
-                let packet = incoming.subdata(in: 0..<end)
-                incoming.removeSubrange(0...end)
-                guard !packet.isEmpty, origins.isEmpty,
-                      let body = try? JSONSerialization.jsonObject(with: packet) as? [String: Any],
-                      let id = body["id"] as? String,
-                      id.range(of: "^[A-Za-z0-9-]{1,64}$", options: .regularExpression) != nil,
-                      origins[id] == nil else { continue }
-                origins[id] = request.central.identifier
-                receive?(packet.base64EncodedString())
-            }
+        } catch BluetoothWriteBuffer.Failure.invalidOffset {
+            peripheral.respond(to: first, withResult: .invalidOffset)
+        } catch BluetoothWriteBuffer.Failure.tooLarge {
+            peripheral.respond(to: first, withResult: .invalidAttributeValueLength)
+        } catch {
+            peripheral.respond(to: first, withResult: .unlikelyError)
         }
     }
 

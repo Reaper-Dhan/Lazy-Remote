@@ -129,6 +129,10 @@ jobs:
         run: |
           swiftc -swift-version 5 -D DEBUG -parse-as-library iphone/RemoteConnection.swift test_iphone.swift -o "$RUNNER_TEMP/test-iphone"
           "$RUNNER_TEMP/test-iphone"
+      - name: Verify Bluetooth write transactions
+        run: |
+          swiftc -swift-version 5 -parse-as-library BluetoothHost.swift test_bluetooth.swift -o "$RUNNER_TEMP/test-bluetooth"
+          "$RUNNER_TEMP/test-bluetooth"
 
   build-android-tv:
     needs: test
