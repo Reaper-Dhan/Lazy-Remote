@@ -8,7 +8,7 @@
 
 | Host | Controller | Connection |
 | --- | --- | --- |
-| macOS 13+, Windows 10/11, Linux (X11 or Wayland) | Touchscreen browser or a browser with a mouse or trackpad | HTTPS on the local network |
+| macOS 13+, Windows 10/11, Linux (X11 or Wayland), Android TV and Google TV on Android 13+ | Touchscreen browser or a browser with a mouse or trackpad | HTTPS on the local network |
 
 ## Quick start
 
@@ -27,6 +27,17 @@ Click **Set up phone** to start the server, set up input access, and pair your p
 While the server runs, closing the window keeps the remote going: on a Mac, Lazy Remote stays in the menu bar; on Windows and Linux, it asks whether to minimize. When a phone asks for control, the window comes back so you can approve it.
 
 Current Mac, Windows, and Linux builds include Python. You don’t need to install it separately or install Xcode Command Line Tools to run the app. Older Mac releases may still require an installed Python.
+
+### Android TV and Google TV
+
+Use the TV preview APK from the `Android-TV-preview` [GitHub Actions artifact](https://github.com/Reaper-Dhan/Lazy-Remote/actions), or build it from source below. Install it on a TV or streaming box running Android TV 13 or later.
+
+1. Open **Lazy Remote** on the TV and enable its service in **Accessibility**. The service sends TV buttons and has no permission to read the screen.
+2. Return to Lazy Remote and select **Start server**. Select **Save phone certificates** and transfer the correct file from the TV’s **Downloads → Lazy Remote TV** folder using a method you trust, such as a USB drive. Follow [the phone certificate steps](#trust-this-computer-on-your-phone) before scanning the TV’s pairing QR.
+3. On the phone, scan the pairing QR or open the address shown on the TV and enter the pairing code. Tap **Request access**, compare the matching number on both screens, and approve the request on the TV.
+4. Use the D-pad, **OK**, **Back**, and **Home**. Volume appears if the TV supports app volume changes. **Play/pause** appears when the TV exposes that action on Android TV 16 or later. Use **Lock phone** on the TV to revoke access.
+
+The server runs while you use other TV apps. It stops when the TV screen switches off or after 30 minutes without phone activity. If the TV changes networks, stop and start Lazy Remote and use the address shown on the TV.
 
 Connect your computer and phone to the same private Wi-Fi network.
 
@@ -126,6 +137,8 @@ node --test test_remote_js.cjs
 
 **Mac app.** You need the Xcode Command Line Tools with Swift 5.9 or later. `./"Build Launcher.command"` makes a universal app (Apple Silicon and Intel) with the server inside it and packs `dist/Lazy-Remote-macOS.zip`.
 
+**Android TV app.** With JDK 17 or 21 and Android SDK platforms for API 36 installed, run `./android-tv/gradlew -p android-tv :app:assembleDebug` (use `android-tv\gradlew.bat` on Windows). The debug APK is written to `android-tv/app/build/outputs/apk/debug/app-debug.apk`.
+
 **Windows and Linux apps.** Build on the target system, because PyInstaller can’t cross-compile:
 
 ```bash
@@ -148,6 +161,7 @@ The phone scanner bundles [jsQR 1.4.0](https://github.com/cozmo/jsQR) under the 
 | [platform_support.py](platform_support.py) | Data folder, file lock, and network address for each system |
 | [input_helper.swift](input_helper.swift) | macOS mouse, keyboard, and media events |
 | [input_backends.py](input_backends.py) | Windows (`SendInput`) and Linux (`/dev/uinput`) mouse, keyboard, and media events |
+| [android-tv/](android-tv/) | Android TV host app, certificate generation, and TV button output |
 | [index.html](index.html), [remote.js](remote.js), [remote.css](remote.css) | Mobile browser interface |
 
 **Terminal mode.** Run `./"Start Remote.command"` on a Mac, or `python3 server.py` on any system, to start the server in a terminal. Use the printed `approve` or `deny` command and matching number. Press **Enter** on its own to forget the browser and generate a new code, or **Ctrl+C** to stop. Set `REMOTE_BIND` to choose a private IPv4 interface or `REMOTE_PORT` to override port 8765. Windows and Linux need `pip install cryptography` for terminal mode unless `openssl` is installed.

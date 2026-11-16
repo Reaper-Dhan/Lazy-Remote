@@ -113,6 +113,28 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  build-android-tv:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - name: Build and verify the Android TV preview
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          ./android-tv/gradlew -p android-tv :app:assembleDebug
+          mkdir -p dist
+          cp android-tv/app/build/outputs/apk/debug/app-debug.apk dist/Lazy-Remote-Android-TV-preview.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify dist/Lazy-Remote-Android-TV-preview.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Android-TV-preview
+          path: dist/Lazy-Remote-Android-TV-preview.apk
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, build-linux]
@@ -130,6 +152,7 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
+          pattern: Lazy-Remote-*
           merge-multiple: true
       - name: Write checksums
         working-directory: dist
