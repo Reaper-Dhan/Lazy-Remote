@@ -30,6 +30,9 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     private var awaiting: (id: String, generation: Int, completion: ([String: Any]) -> Void)?
     private var timeout: Task<Void, Never>?
     private var poll: Task<Void, Never>?
+    private var connectionTimeout: Task<Void, Never>?
+    private var connectionAttempt: UUID?
+    private var autoReconnect = true
     private var requestKey = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     private var token: String?
@@ -55,6 +58,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     var testSend: (([String: Any]) -> Void)?
     func testReply(_ response: [String: Any]) { acceptResponse(response) }
     func testPoll() { check() }
+    func testBeginConnection(timeout: Duration) { armConnectionDeadline(timeout) }
     #endif
 
     func scan() {
@@ -77,7 +81,6 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
             error = "Confirm Lock on the previous host before choosing another host."
             return
         }
-        connecting = true
         manager?.stopScan()
         if let previous = peripheral { manager?.cancelPeripheralConnection(previous) }
         timeout?.cancel()
@@ -89,8 +92,49 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         if pendingLock == nil { clearSession() }
         peripheral = device.peripheral
         peripheral?.delegate = self
+        autoReconnect = true
+        beginConnection(device.peripheral)
+    }
+
+    private func armConnectionDeadline(_ duration: Duration = .seconds(30)) {
+        connectionTimeout?.cancel()
+        let attempt = UUID()
+        connectionAttempt = attempt
+        connecting = true
         status = "Connecting…"
-        manager?.connect(device.peripheral)
+        connectionTimeout = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled, let self, self.connectionAttempt == attempt else { return }
+            self.stopConnection("Connection timed out. Choose a host and try again.")
+        }
+    }
+
+    private func finishConnectionAttempt() {
+        connectionTimeout?.cancel()
+        connectionTimeout = nil
+        connectionAttempt = nil
+        connecting = false
+    }
+
+    private func beginConnection(_ peer: CBPeripheral) {
+        guard !connecting, manager?.state == .poweredOn else { return }
+        armConnectionDeadline()
+        manager?.connect(peer)
+    }
+
+    func cancelConnection() { stopConnection("Connection cancelled. Choose a host to reconnect.") }
+
+    private func stopConnection(_ message: String) {
+        autoReconnect = false
+        finishConnectionAttempt()
+        connected = false
+        ready = false
+        poll?.cancel()
+        input = nil
+        buffer.removeAll()
+        failRequest(message)
+        if let peripheral { manager?.cancelPeripheralConnection(peripheral) }
+        status = locking ? message + " Lock is still unconfirmed; use Lock phone on the host." : message
     }
 
     func setActive(_ value: Bool) {
@@ -100,7 +144,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         queued.removeAll()
         if value {
             if connected { check() }
-            else if let peripheral { manager?.connect(peripheral) }
+            else if autoReconnect, let peripheral { beginConnection(peripheral) }
         } else {
             manager?.stopScan()
             if drag { command(["action": "drag", "active": false], allowHidden: true) }
@@ -313,11 +357,18 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn { beginScan() }
+        if central.state == .poweredOn {
+            if active, autoReconnect, let peripheral { beginConnection(peripheral) }
+            else if active { beginScan() }
+        }
         else {
             connected = false
-            connecting = false
+            finishConnectionAttempt()
+            poll?.cancel()
             ready = false
+            input = nil
+            buffer.removeAll()
+            failRequest("Bluetooth unavailable.")
             queued.removeAll()
             delta = .zero
             status = central.state == .unauthorized ? "Allow Bluetooth access in iPhone Settings." : "Turn on Bluetooth."
@@ -333,63 +384,62 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard autoReconnect else { central.cancelPeripheralConnection(peripheral); return }
         status = "Securing Bluetooth connection…"
         peripheral.discoverServices([serviceID])
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         guard self.peripheral?.identifier == peripheral.identifier else { return }
-        connecting = false
+        finishConnectionAttempt()
+        autoReconnect = false
         status = "Could not connect. Find hosts and try again."
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         guard self.peripheral?.identifier == peripheral.identifier else { return }
         connected = false
-        connecting = false
+        finishConnectionAttempt()
+        poll?.cancel()
         ready = false
         input = nil
         buffer.removeAll()
         failRequest("Bluetooth disconnected.")
-        if active && self.peripheral?.identifier == peripheral.identifier {
+        if active && autoReconnect && central.state == .poweredOn {
             status = "Reconnecting…"
-            connecting = true
-            central.connect(peripheral)
+            beginConnection(peripheral)
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard self.peripheral?.identifier == peripheral.identifier, autoReconnect else { return }
         guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == serviceID }) else {
-            self.error = "This host does not expose Lazy Remote controls."
-            manager?.cancelPeripheralConnection(peripheral)
+            stopConnection("This host does not expose Lazy Remote controls.")
             return
         }
         peripheral.discoverCharacteristics([inputID, outputID], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard self.peripheral?.identifier == peripheral.identifier, autoReconnect else { return }
         guard error == nil else {
-            self.error = "Could not discover Bluetooth controls."
-            connecting = false
+            stopConnection("Could not discover Bluetooth controls. Choose a host and try again.")
             return
         }
         input = service.characteristics?.first(where: { $0.uuid == inputID })
         if let output = service.characteristics?.first(where: { $0.uuid == outputID }), input != nil {
             peripheral.setNotifyValue(true, for: output)
-        } else { self.error = "This host is missing Bluetooth controls."; connecting = false }
+        } else { stopConnection("This host is missing Bluetooth controls.") }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard self.peripheral?.identifier == peripheral.identifier, autoReconnect else { return }
         guard error == nil, characteristic.isNotifying, input != nil else {
-            self.error = "Bluetooth pairing was declined or unavailable."
-            connecting = false
+            stopConnection("Bluetooth pairing was declined or unavailable. Choose a host to retry.")
             return
         }
         connected = true
-        connecting = false
+        finishConnectionAttempt()
         if pendingLock != nil { lockNeedsSend = true }
         flushCommands()
         check()
@@ -404,7 +454,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard self.peripheral?.identifier == peripheral.identifier, autoReconnect else { return }
         guard error == nil else {
             failRequest("Bluetooth write failed.")
             manager?.cancelPeripheralConnection(peripheral)
@@ -416,7 +466,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard self.peripheral?.identifier == peripheral.identifier else { return }
+        guard self.peripheral?.identifier == peripheral.identifier, autoReconnect else { return }
         guard error == nil, let data = characteristic.value, buffer.count + data.count <= 32768 else {
             buffer.removeAll(); failRequest("Invalid Bluetooth response."); return
         }

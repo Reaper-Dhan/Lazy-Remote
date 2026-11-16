@@ -74,7 +74,7 @@ private struct RemoteView: View {
                         if !remote.match.isEmpty {
                             Text(remote.match).font(.system(size: 38, weight: .semibold, design: .monospaced))
                             Text("Compare this number on the host, then approve the connection there.")
-                        } else if !remote.approved {
+                        } else if !remote.approved && !remote.locking {
                             Text("Pairing code").font(.caption)
                             TextField("Pairing code from the host", text: $remote.pairingCode)
                                 .textInputAutocapitalization(.characters)
@@ -84,6 +84,10 @@ private struct RemoteView: View {
                             Button("Scan pairing QR") { scanning = true }
                         }
                     } else {
+                        if remote.connecting {
+                            ProgressView("Connecting to host…")
+                            Button("Cancel connection", action: remote.cancelConnection)
+                        }
                         Button("Find hosts", action: remote.scan).disabled(remote.connecting)
                         ForEach(remote.devices) { device in
                             Button(device.name) { remote.connect(device) }.disabled(remote.connecting)
@@ -99,7 +103,9 @@ private struct RemoteView: View {
             }
             .navigationTitle("Lazy Remote")
             .toolbar {
-                if remote.connected { Button("Lock", action: remote.lock) }
+                if remote.locking {
+                    Button("Retry Lock", action: remote.lock).disabled(!remote.connected)
+                } else if remote.connected { Button("Lock", action: remote.lock) }
             }
             .sheet(isPresented: $scanning) {
                 PairingScanner { value in

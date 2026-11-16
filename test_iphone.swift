@@ -6,7 +6,7 @@ import CoreGraphics
 @main
 struct NativeSessionTests {
     @MainActor
-    static func main() {
+    static func main() async {
         var requests: [[String: Any]] = []
         let remote = RemoteConnection()
         remote.testSend = { requests.append($0) }
@@ -116,6 +116,17 @@ struct NativeSessionTests {
         precondition(requests.last!["token"] == nil)
         reply(401)
         precondition(!remote.ready && !remote.approved)
-        print("Native session recovery, queued controls, and late-claim lock tests passed.")
+
+        let connecting = RemoteConnection()
+        connecting.testBeginConnection(timeout: .milliseconds(20))
+        precondition(connecting.connecting)
+        try? await Task.sleep(for: .milliseconds(80))
+        precondition(!connecting.connecting && connecting.status.contains("timed out"))
+        connecting.testBeginConnection(timeout: .seconds(5))
+        connecting.cancelConnection()
+        precondition(!connecting.connecting && connecting.status.contains("cancelled"))
+        try? await Task.sleep(for: .milliseconds(40))
+        precondition(!connecting.connecting && connecting.status.contains("cancelled"))
+        print("Native session boundaries, Lock retries, connection deadlines and cancellation passed.")
     }
 }
