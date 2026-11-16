@@ -812,18 +812,21 @@ def terminal_event(event, **data):
 
 
 def local_controls(remote, stop, launcher):
+    bluetooth_requests = None
     for line in sys.stdin:
         if stop.is_set():
             return
         command = line.strip()
         try:
             if launcher and command.startswith("bluetooth "):
-                from bluetooth_transport import local_request
+                import queue
+                from bluetooth_transport import start_requests
+                if bluetooth_requests is None:
+                    bluetooth_requests = start_requests(remote, stop, launcher_event)
                 try:
-                    reply = local_request(remote, command.removeprefix("bluetooth "))
-                    launcher_event("bluetooth", response=reply)
-                except (ValueError, RecursionError):
-                    launcher_event("notice", message="Invalid Bluetooth request.")
+                    bluetooth_requests.put_nowait(command.removeprefix("bluetooth "))
+                except queue.Full:
+                    launcher_event("notice", message="Bluetooth requests are arriving too quickly.")
                 continue
             decision = re.fullmatch(r"(approve|deny) ([0-9]{6})", command)
             if decision:

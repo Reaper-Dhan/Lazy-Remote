@@ -593,6 +593,43 @@ class BluetoothSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("cmd", token="bad", body={})["status"], 400)
         self.assertFalse(self.bridge.commands)
 
+    def test_host_lock_does_not_wait_for_a_slow_bluetooth_control(self):
+        import base64
+        from unittest.mock import patch
+        from server import local_controls
+        started, release, replied = threading.Event(), threading.Event(), threading.Event()
+        stop = threading.Event()
+        session = self.pair()
+        message = {"id": "slow-input", "op": "cmd", "request_key": self.key, **session,
+                   "body": {"action": "key", "name": "space"}}
+        encoded = base64.b64encode(json.dumps(message).encode()).decode()
+
+        def send(command):
+            started.set()
+            self.assertTrue(release.wait(timeout=3))
+            return True
+
+        def lines():
+            yield "bluetooth " + encoded + "\n"
+            self.assertTrue(started.wait(timeout=3))
+            yield "new_code\n"
+            self.assertIsNone(self.remote.token, "Host Lock must revoke while input is still blocked")
+            release.set()
+            self.assertTrue(replied.wait(timeout=3))
+
+        def emit(event, **fields):
+            if event == "bluetooth":
+                result = json.loads(base64.b64decode(fields["response"]))
+                self.assertEqual(result["status"], 401)
+                replied.set()
+
+        try:
+            with patch.object(self.bridge, "send", send), patch("server.sys.stdin", lines()), patch("server.launcher_event", emit):
+                local_controls(self.remote, stop, True)
+        finally:
+            release.set()
+            stop.set()
+
 
 if __name__ == "__main__":
     unittest.main()

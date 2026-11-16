@@ -72,3 +72,24 @@ def local_request(remote, encoded):
     if not isinstance(message, dict):
         raise ValueError("Invalid Bluetooth request.")
     return base64.b64encode(json.dumps(dispatch(remote, message)).encode("utf-8")).decode("ascii")
+
+
+def start_requests(remote, stop, emit):
+    """Keep slow native input off the host approval/Lock controls thread."""
+    import queue
+    import threading
+    requests = queue.Queue(maxsize=1)
+
+    def run():
+        while not stop.is_set():
+            try:
+                encoded = requests.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                emit("bluetooth", response=local_request(remote, encoded))
+            except (ValueError, RecursionError):
+                emit("notice", message="Invalid Bluetooth request.")
+
+    threading.Thread(target=run, name="bluetooth-requests", daemon=True).start()
+    return requests
