@@ -4,6 +4,7 @@ It starts the server as a child process (`--server --launcher`) and talks to it
 over stdin/stdout with the same JSON lines the Mac launcher uses.
 """
 import json
+import os
 from pathlib import Path
 import queue
 import subprocess
@@ -275,6 +276,7 @@ class App:
         if self.phase in ("starting", "running"):
             ttk.Button(header, text="Stop server", command=self.stop).pack(side="right")
         ttk.Button(header, text="Set up phone", command=self.open_guide).pack(side="right", padx=6)
+        ttk.Button(body, text="Bluetooth setup", command=self.open_bluetooth_guide).pack(anchor="w", pady=(0, 12))
 
         if self.notice:
             self.label(self.card(body), self.notice)
@@ -425,6 +427,29 @@ class App:
         canvas.pack(side="left")
 
     # Setup guide ----------------------------------------------------------
+    def open_bluetooth_guide(self):
+        guide = self.tk.Toplevel(self.root)
+        guide.title("Bluetooth tethering")
+        guide.transient(self.root)
+        frame = self.ttk.Frame(guide, padding=20)
+        frame.pack(fill="both")
+        self.label(frame, "Connect without Wi-Fi", "Title.TLabel")
+        self.label(frame, "1. Enable Bluetooth tethering on Android or Personal Hotspot on iPhone. "
+                          "Join that Bluetooth network from this PC using system settings. "
+                          "Pairing alone does not create a network.")
+        self.label(frame, "2. Stop Lazy Remote. Enter this PC’s Bluetooth network IPv4 address "
+                          "in Host IPv4 address, then start the server again. Find the address "
+                          "in network adapter settings, ipconfig on Windows, or ip -4 address on Linux.")
+        self.label(frame, "3. Open the new HTTPS address on the phone. Install the trust certificate "
+                          "if needed, then request access and approve the matching number on this PC.")
+        self.label(frame, "Direct Bluetooth is currently a native iPhone / Mac preview. "
+                          "Windows, Linux and TV use network connections, including Bluetooth tethering "
+                          "where the system supports it.", "Muted.TLabel")
+        if IS_WINDOWS:
+            self.ttk.Button(frame, text="Open Bluetooth Settings",
+                            command=lambda: os.startfile("ms-settings:bluetooth")).pack(anchor="w", pady=8)
+        self.ttk.Button(frame, text="Done", command=guide.destroy).pack(anchor="e")
+
     def open_guide(self):
         if self.guide is not None and self.guide.winfo_exists():
             self.guide.lift()
