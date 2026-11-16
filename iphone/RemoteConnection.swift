@@ -103,8 +103,10 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         connectionAttempt = attempt
         connecting = true
         status = "Connecting…"
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: duration)
         connectionTimeout = Task { [weak self] in
-            try? await Task.sleep(for: duration)
+            try? await clock.sleep(until: deadline)
             guard !Task.isCancelled, let self, self.connectionAttempt == attempt else { return }
             self.stopConnection("Connection timed out. Choose a host and try again.")
         }

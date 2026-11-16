@@ -120,7 +120,11 @@ struct NativeSessionTests {
         let connecting = RemoteConnection()
         connecting.testBeginConnection(timeout: .milliseconds(20))
         precondition(connecting.connecting)
-        try? await Task.sleep(for: .milliseconds(80))
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while connecting.connecting && clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         precondition(!connecting.connecting && connecting.status.contains("timed out"))
         connecting.testBeginConnection(timeout: .seconds(5))
         connecting.cancelConnection()
