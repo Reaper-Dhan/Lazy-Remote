@@ -19,10 +19,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       # The Windows and Linux apps bundle these; the Mac app uses the system OpenSSL.
@@ -52,11 +52,11 @@ jobs:
             artifact: Lazy-Remote-macOS
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - if: runner.os == 'Windows'
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - if: runner.os == 'Windows'
@@ -78,7 +78,7 @@ jobs:
           server="smoke/Lazy Remote.app/Contents/Resources"
           python3 .github/smoke_package.py "$server/python/bin/python3" -E -s -B -u "$server/server/server.py"
           codesign --verify --deep --strict "smoke/Lazy Remote.app"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
@@ -93,7 +93,7 @@ jobs:
     steps:
       - name: Install Python 3.12 with Tk
         run: dnf install -y --setopt=install_weak_deps=False python3.12 python3.12-pip python3.12-tkinter binutils tar gzip util-linux
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: |
@@ -107,7 +107,7 @@ jobs:
         run: |
           mkdir smoke && tar -xzf dist/Lazy-Remote-Linux-*.tar.gz -C smoke
           runuser -u nobody -- python3.12 .github/smoke_package.py smoke/lazy-remote/lazy-remote --server
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Lazy-Remote-Linux
           path: dist/*
@@ -117,7 +117,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Android SDK packages
@@ -145,7 +145,7 @@ jobs:
           mkdir -p dist
           cp android-tv/app/build/outputs/apk/debug/app-debug.apk dist/Lazy-Remote-Android-TV-preview.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify dist/Lazy-Remote-Android-TV-preview.apk
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Android-TV-preview
           path: dist/Lazy-Remote-Android-TV-preview.apk
@@ -160,12 +160,12 @@ jobs:
       id-token: write      # signs the build attestation with this workflow's identity
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: packaging/release-notes.md
           sparse-checkout-cone-mode: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: Lazy-Remote-*
