@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import plistlib
 from queue import Queue
+import secrets
 import ssl
 import struct
 import subprocess
@@ -47,7 +48,7 @@ def smoke(process):
     assert profile["PayloadContent"][0]["PayloadContent"] == root
     trust = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(root))
 
-    def request(path, body=None, *, cookie=None, tab=None, expected=200, method=None):
+    def request(path, body=None, *, cookie=None, tab=None, page=None, expected=200, method=None):
         connection = http.client.HTTPSConnection(url.hostname, url.port, timeout=10, context=trust)
         headers = {"Origin": f"https://{url.netloc}"}
         if body is not None:
@@ -56,6 +57,8 @@ def smoke(process):
             headers["Cookie"] = cookie
         if tab:
             headers["X-Lazy-Remote-Tab"] = tab
+        if page:
+            headers["X-Lazy-Remote-Request"] = page
         try:
             connection.request(method or ("GET" if body is None else "POST"), path,
                                None if body is None else json.dumps(body), headers)
@@ -81,18 +84,24 @@ def smoke(process):
     assert not head_body and int(metadata["Content-Length"]) == len(icon)
     status = json.loads(request("/api/status", expected=401)[1])
     assert f"https://{url.netloc}" in status["pairing_origins"]
-    headers, _ = request("/api/pair", {"qr": ready["qr"]}, expected=202)
+    page = secrets.token_hex(32)
+    headers, _ = request("/api/pair", {"qr": ready["qr"]}, page=page, expected=202)
     pending = headers["Set-Cookie"].split(";", 1)[0]
     match = next_event(events, "pairing")["match"]
-    assert json.loads(request("/api/status", cookie=pending, expected=401)[1])["match"] == match
-    request("/api/claim", {}, cookie=pending, expected=409)
+    assert json.loads(request("/api/status", page=page, expected=401)[1])["match"] == match
+    request("/api/claim", {}, cookie=pending, expected=401)
+    request("/api/claim", {}, page=page, expected=409)
     process.stdin.write(f"approve {match}\n")
     process.stdin.flush()
     assert next_event(events, "pairing")["approved"]
-    headers, body = request("/api/claim", {}, cookie=pending)
+    _, first_claim = request("/api/claim", {}, page=page)
+    assert json.loads(request("/api/status", page=page, expected=401)[1])["approved"]
+    headers, body = request("/api/claim", {}, page=page)
+    assert json.loads(body)["tab"] == json.loads(first_claim)["tab"]
     session = headers["Set-Cookie"].split(";", 1)[0]
     tab = json.loads(body)["tab"]
-    assert "ready" in json.loads(request("/api/status", cookie=session, tab=tab)[1])
+    assert "ready" in json.loads(request("/api/status", cookie=session, tab=tab, page=page)[1])
+    request("/api/claim", {}, page=page, expected=401)
     request("/api/status", cookie=session, expected=401)
     request("/api/disconnect", {}, cookie=session, tab=tab)
     request("/api/status", cookie=session, tab=tab, expected=401)

@@ -32,16 +32,13 @@ class RememberedBrowser:
         self.record = None
         if path is not None:
             try:
-                self.record = json.loads(path.read_text(encoding="ascii"))
-            except FileNotFoundError:
-                pass
-            if self.record is not None and (
-                not isinstance(self.record, dict)
-                or not isinstance(self.record.get("digest"), str)
-                or not re.fullmatch(r"[0-9a-f]{64}", self.record["digest"])
-                or type(self.record.get("expires")) is not int
-            ):
-                raise ValueError("The remembered browser file is invalid.")
+                record = json.loads(path.read_text(encoding="ascii"))
+            except (FileNotFoundError, ValueError, RecursionError):
+                return
+            if (isinstance(record, dict) and isinstance(record.get("digest"), str)
+                    and re.fullmatch(r"[0-9a-f]{64}", record["digest"])
+                    and type(record.get("expires")) is int):
+                self.record = record
 
     def active(self):
         return self.record is not None and self.record["expires"] > time.time()
@@ -81,6 +78,7 @@ class Approval:
     match: str
     until: float
     remember: Optional[bool]  # None means a previously paired browser is requesting a session.
+    request_key: Optional[str] = None
     approved: bool = False
 
 
@@ -118,7 +116,7 @@ class Pairing:
             changed = True
         return changed
 
-    def pair(self, body, now):
+    def pair(self, body, now, request_key=None):
         if self.pending:
             raise RequestError(409, "A request is already waiting for approval on the computer.")
         if not self.code:
@@ -145,23 +143,29 @@ class Pairing:
         if not valid or type(remember) is not bool:
             raise RequestError(403, "That pairing code didn't match.")
         self.clear_codes()
-        return self.request(remember, now)
+        return self.request(remember, now, request_key)
 
-    def resume(self, device, now):
+    def resume(self, device, now, request_key=None):
         if not self.browser.matches(device):
             raise RequestError(401, "Pair this browser to control the computer.")
         if self.pending:
             raise RequestError(409, "A request is already waiting for approval on the computer.")
-        return self.request(None, now)
+        return self.request(None, now, request_key)
 
-    def request(self, remember, now):
+    def request(self, remember, now, request_key):
         self.pending = Approval(
-            secrets.token_urlsafe(32), f"{secrets.randbelow(1_000_000):06}", now + APPROVAL_LIFETIME, remember
+            secrets.token_urlsafe(32), f"{secrets.randbelow(1_000_000):06}", now + APPROVAL_LIFETIME,
+            remember, request_key,
         )
         return self.pending
 
-    def request_for(self, token):
-        if token and self.pending and hmac.compare_digest(token, self.pending.token):
+    def request_for(self, token, request_key):
+        if not self.pending:
+            return None
+        if self.pending.request_key is not None:
+            if request_key and hmac.compare_digest(request_key, self.pending.request_key):
+                return self.pending
+        elif token and hmac.compare_digest(token, self.pending.token):
             return self.pending
         return None
 
@@ -175,8 +179,8 @@ class Pairing:
                 self.generate(now)
             self.pending = None
 
-    def claim(self, token):
-        pending = self.request_for(token)
+    def claim(self, token, request_key):
+        pending = self.request_for(token, request_key)
         if not pending:
             raise RequestError(401, "Request access again from your phone.")
         if not pending.approved:

@@ -81,6 +81,7 @@ if (qrValue !== null) history.replaceState(null, '', location.pathname + locatio
 let paired = false;
 let tab = null;
 let isTv = false;
+let requestKey = newRequestKey();
 let remembered = false;
 let awaitingApproval = false;
 let manualPairing = false;
@@ -284,21 +285,27 @@ function showOffline(message = `${isTv ? 'TV' : 'Computer'} unreachable. Reconne
   renderState('offline', message);
 }
 
+function newRequestKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function sessionHeaders(body, sessionTab) {
   const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
   if (sessionTab) headers['X-Lazy-Remote-Tab'] = sessionTab;
   return headers;
 }
 
-async function api(path, body, timeout = 7500) {
+async function api(path, body, timeout = 7500, sessionTab = tab) {
   const abort = new AbortController();
   const foregroundOnly = path === '/api/status' || path === '/api/cmd';
   if (foregroundOnly) foregroundRequests.add(abort);
   const timer = setTimeout(() => abort.abort(), timeout);
   try {
+    const headers = sessionHeaders(body, sessionTab);
+    if (path !== '/api/cmd' && path !== '/api/disconnect') headers['X-Lazy-Remote-Request'] = requestKey;
     const response = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: sessionHeaders(body, tab),
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'same-origin',
       cache: 'no-store',
@@ -321,6 +328,8 @@ async function checkConnection() {
     let status = await api('/api/status');
     if (started !== revision || document.hidden) return;
     if (status.status === 401 && status.approved) {
+      qrTicket = null;
+      pairCode.value = '';
       claiming = true;
       let claim;
       try {
@@ -356,6 +365,9 @@ async function checkConnection() {
       remembered = status.remembered;
       pairingOrigins = new Set([location.origin, ...(status.pairing_origins || [])]);
       if (status.match) {
+        qrTicket = null;
+        pairCode.value = '';
+        pairError.textContent = '';
         awaitingApproval = true;
         showPending(status.match);
       } else {
@@ -443,7 +455,7 @@ pairForm.addEventListener('submit', async (event) => {
     pairSubmit.disabled = false;
     scanPairing.disabled = false;
     pairSubmit.textContent = 'Request access';
-    if (awaitingApproval) checkConnection();
+    checkConnection();
   }
 });
 
@@ -451,19 +463,21 @@ disconnectBtn.addEventListener('click', async () => {
   if (updatingSession) return;
   updatingSession = true;
   revision++;
+  const closingTab = tab;
+  clearTab();
+  paired = false;
+  requestKey = newRequestKey();
   disconnectBtn.disabled = true;
   renderState('checking', 'Locking remote…');
   try {
-    const response = await api('/api/disconnect', {});
+    const response = await api('/api/disconnect', {}, 7500, closingTab);
     if (response.status === 200 || response.status === 401) {
-      clearTab();
-      paired = false;
       renderState('checking', 'Access locked');
     } else {
-      showOffline(response.error || 'Could not lock the remote.');
+      pairError.textContent = response.error || 'Could not confirm the host locked.';
     }
   } catch {
-    showOffline('Lock could not be confirmed. You can stop the server from the computer.');
+    pairError.textContent = 'Could not confirm the host locked. Use Lock phone on the host to revoke access there.';
   } finally {
     updatingSession = false;
     disconnectBtn.disabled = false;

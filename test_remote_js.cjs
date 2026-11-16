@@ -20,7 +20,7 @@ function element() {
   };
 }
 
-async function remote({ unavailable = [], approve = false, claimReply, reply, statusReply, host,
+async function remote({ unavailable = [], approve = false, claimReply, disconnectReply, pairReply, reply, statusReply, host,
                         gestureSettings = {}, pairOrigins } = {}) {
   const elements = new Map();
   const bright = element();
@@ -69,6 +69,7 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
       requests.push({ path, options });
       if (path === '/api/pair') {
         pendingPair = true;
+        if (pairReply) await pairReply();
         return { status: 202, json: async () => ({}) };
       }
       if (path === '/api/claim') {
@@ -78,15 +79,21 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
         return { status: 200, json: async () => ({ tab: 'approved-tab' }) };
       }
       if (path === '/api/disconnect') {
+        if (disconnectReply) {
+          assert.equal(options.headers['X-Lazy-Remote-Tab'], 'approved-tab');
+          await disconnectReply();
+        }
         authorized = false;
         return { status: 200, json: async () => ({}) };
       }
       if (path === '/api/status') {
         if (statusReply) await statusReply();
-        if (!authorized) return { status: 401, json: async () => ({
+        if (!authorized || (approve && !options.headers['X-Lazy-Remote-Tab'])) {
+          return { status: 401, json: async () => ({
           host, approved, remembered: true, pairing_origins: pairOrigins,
           match: pendingPair ? '340287' : null,
-        }) };
+          }) };
+        }
         return { status: 200, json: async () => ({
           host, ready: true, dragging, unavailable,
           gestures: {
@@ -381,6 +388,27 @@ test('a desktop approval arriving during an app switch is retained', async () =>
   await pad.visibility(false);
   assert.equal(pad.get('connectionStatus').textContent, 'Connected securely');
   assert.equal(pad.requests.filter(item => item.path === '/api/claim').length, 1);
+});
+
+test('a lost pairing response can still show the matching approval number', async () => {
+  const pad = await remote({ pairOrigins: [], pairReply() { throw new Error('Wi-Fi dropped'); } });
+  pad.scan('https://remote.local:8765/#pair=' + 'a'.repeat(43));
+  await pad.get('pairForm').events.submit({ preventDefault() {} });
+  await settle();
+  assert.equal(pad.get('matchNumber').textContent, '340287');
+  const pairing = pad.requests.find(request => request.path === '/api/pair');
+  assert.match(pairing.options.headers['X-Lazy-Remote-Request'], /^[a-f0-9]{64}$/);
+  assert.equal(pad.requests.at(-1).options.headers['X-Lazy-Remote-Request'],
+    pairing.options.headers['X-Lazy-Remote-Request']);
+});
+
+test('an interrupted lock never restores the tab credential', async () => {
+  const pad = await remote({ approve: true, disconnectReply() { throw new Error('Wi-Fi dropped'); } });
+  await pad.get('disconnectBtn').events.click();
+  await settle();
+  assert.equal(pad.get('remoteControls').hidden, true);
+  assert.equal(pad.requests.at(-1).options.headers['X-Lazy-Remote-Tab'], undefined);
+  assert.match(pad.get('pairError').textContent, /Could not confirm the host locked/);
 });
 
 test('a resumed tab keeps one ordered motion sequence', async () => {

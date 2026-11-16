@@ -13,7 +13,7 @@ import unittest
 
 from server import (
     APPROVAL_COOKIE, COOKIE, DEVICE_COOKIE, IDLE_LIFETIME, SERVER_IDLE_MESSAGE,
-    SERVER_IDLE_TIMEOUT, PRESENCE_LIFETIME, TAB_HEADER, Remote, RemoteServer, mac_swipe_shortcuts,
+    SERVER_IDLE_TIMEOUT, PRESENCE_LIFETIME, REQUEST_HEADER, TAB_HEADER, Remote, RemoteServer, mac_swipe_shortcuts,
 )
 from tls_setup import tls_identity
 
@@ -209,6 +209,47 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status", cookie=session)[0], 401)
         self.remote.decide(self.remote.snapshot()["match"], True)
         self.assertEqual(self.request("/api/claim", {}, cookie=next_pending)[0], 200)
+
+    def test_damaged_browser_record_still_allows_a_new_pairing(self):
+        self.browser_path.write_bytes(b'{"digest":')
+        self.remote = self.server.remote = Remote(self.bridge, self.browser_path)
+        self.assertFalse(self.remote.snapshot()["remembered"])
+        self.code = self.remote.new_code()
+        self.pair()
+
+    def test_stopping_host_refuses_input_before_the_listener_closes(self):
+        session = self.pair().split(";", 1)[0]
+        self.remote.stop_event.set()
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "space"}, cookie=session)[0], 503)
+        self.assertEqual(self.request("/api/status", cookie=session)[0], 503)
+        self.assertFalse(self.bridge.commands)
+
+    def test_same_page_recovers_pairing_and_claim_after_responses_are_lost(self):
+        key = {REQUEST_HEADER: "a" * 64}
+        wrong_key = {REQUEST_HEADER: "b" * 64}
+        pair = {"qr": self.remote.snapshot()["qr"], "remember": True}
+        status, headers, _ = self.request("/api/pair", pair, headers=key)
+        self.assertEqual(status, 202)
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, retry, _ = self.request("/api/pair", pair, headers=key)
+        self.assertEqual(status, 202)
+        self.assertEqual(headers["Set-Cookie"], retry["Set-Cookie"])
+        match = self.remote.snapshot()["match"]
+        self.assertEqual(json.loads(self.request("/api/status", headers=key)[2])["match"], match)
+        self.assertIsNone(json.loads(self.request("/api/status", cookie=cookie)[2])["match"])
+        self.assertEqual(self.request("/api/claim", {}, headers=key)[0], 409)
+        self.remote.decide(match, True)
+        self.assertEqual(self.request("/api/claim", {}, cookie=cookie, headers=wrong_key)[0], 401)
+        status, issued, body = self.request("/api/claim", {}, headers=key)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(self.request("/api/status", headers=key)[2])["approved"])
+        status, recovered, recovered_body = self.request("/api/claim", {}, headers=key)
+        self.assertEqual(status, 200)
+        self.assertEqual(issued.get_all("Set-Cookie"), recovered.get_all("Set-Cookie"))
+        self.assertEqual(body, recovered_body)
+        session = issued["Set-Cookie"].split(";", 1)[0]
+        self.assertEqual(self.request("/api/status", cookie=session, headers=key)[0], 200)
+        self.assertEqual(self.request("/api/claim", {}, headers=key)[0], 401)
 
     def test_tv_host_requires_approval_and_only_dispatches_tv_buttons(self):
         tv = runpy.run_path(str(Path(__file__).parent / "android-tv/app/src/main/python/android_host.py"))

@@ -43,6 +43,7 @@ SERVER_IDLE_MESSAGE = "Server stopped after 30 minutes without phone activity."
 SESSION_LIFETIME = 12 * 60 * 60
 PRESENCE_LIFETIME = 60
 TAB_HEADER = "X-Lazy-Remote-Tab"
+REQUEST_HEADER = "X-Lazy-Remote-Request"
 DRAG_LIFETIME = 15
 MAX_BODY = 4096
 CONNECTION_TIMEOUT = 5
@@ -258,12 +259,13 @@ class Remote:
     accepts_command = staticmethod(valid_command)
 
     def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None,
-                 stop_when_idle=True, presence_lifetime=PRESENCE_LIFETIME):
+                 stop_when_idle=True, presence_lifetime=PRESENCE_LIFETIME, stop_event=None):
         self.bridge = bridge
         self.pairing = Pairing(browser_path)
         self.on_change = on_change
         self.gesture_reader = gesture_reader
         self.stop_when_idle = stop_when_idle
+        self.stop_event = stop_event if stop_event is not None else threading.Event()
         self.gestures = gesture_reader() if gesture_reader else DEFAULT_GESTURES
         self.presence_lifetime = presence_lifetime
         self.motion = (0, 0, 0)
@@ -271,6 +273,7 @@ class Remote:
         self.input_lock = threading.Lock()
         self.input_ready = None
         self.token = self.tab = None
+        self.claim_receipt = None
         self.last_presence = 0
         self.drag_release_pending = False
         self.session_until = self.last_command = 0
@@ -307,8 +310,16 @@ class Remote:
 
     def revoke(self):
         self.token = self.tab = None
+        self.claim_receipt = None
         self.motion = (0, 0, 0)
         self.release_drag()
+
+    def shutdown(self):
+        self.stop_event.set()
+        with self.lock:
+            self.pairing.pending = None
+            self.pairing.clear_codes()
+            self.revoke()
 
     def snapshot(self):
         pending = self.pairing.pending
@@ -352,15 +363,19 @@ class Remote:
         self.publish()
         return self.token, self.tab
 
-    def request_access(self, body=None, device=None, previous_session=None, previous_tab=None):
+    def request_access(self, body=None, device=None, previous_session=None, previous_tab=None, request_key=None):
         with self.lock:
             now = time.monotonic()
             self.expire(now)
+            pending = self.pairing.request_for(None, request_key)
+            if pending:
+                return pending.token
             replace = (self.token is not None and previous_session is not None and previous_tab is None
                        and hmac.compare_digest(previous_session, self.token))
             if self.token and not replace:
                 raise RequestError(409, "A browser is already connected. Lock it before requesting access.")
-            pending = self.pairing.pair(body, now) if body is not None else self.pairing.resume(device, now)
+            pending = (self.pairing.pair(body, now, request_key) if body is not None
+                       else self.pairing.resume(device, now, request_key))
             if replace:
                 self.revoke()
             self.publish()
@@ -375,15 +390,26 @@ class Remote:
             self.pairing.decide(match, approve, now)
             self.publish()
 
-    def claim(self, pending):
+    def can_recover_claim(self, request_key):
+        return bool(request_key and self.claim_receipt
+                    and hmac.compare_digest(request_key, self.claim_receipt[0]))
+
+    def claim(self, pending, request_key=None):
         with self.lock:
             now = time.monotonic()
             self.expire(now)
-            device = self.pairing.claim(pending)
+            if self.can_recover_claim(request_key):
+                return self.token, self.tab, self.claim_receipt[1]
+            device = self.pairing.claim(pending, request_key)
             token, tab = self.start_session(now)
+            if request_key:
+                # Keep a receipt until this page demonstrates that it received the session.
+                self.claim_receipt = (request_key, device)
             return token, tab, device
 
     def expire(self, now):
+        if self.stop_event.is_set():
+            raise RequestError(503, "Lazy Remote is stopping.")
         if self.stop_when_idle and now - self.last_phone_activity >= SERVER_IDLE_TIMEOUT:
             self.pairing.pending = None
             self.pairing.clear_codes()
@@ -407,7 +433,7 @@ class Remote:
                 or not hmac.compare_digest(token, self.token) or not hmac.compare_digest(tab, self.tab)):
             raise RequestError(401, "Request access to control the computer.")
 
-    def status(self, token, tab, device, pending_token):
+    def status(self, token, tab, device, pending_token, request_key=None):
         with self.lock:
             now = time.monotonic()
             try:
@@ -415,15 +441,16 @@ class Remote:
             except RequestError as error:
                 if error.status != 401:
                     raise
-                pending = self.pairing.request_for(pending_token)
+                pending = self.pairing.request_for(pending_token, request_key)
                 return 401, {
                     "remembered": self.pairing.browser.matches(device),
                     "match": pending.match if pending else None,
-                    "approved": bool(pending and pending.approved),
+                    "approved": bool(pending and pending.approved) or self.can_recover_claim(request_key),
                     "new_pairing_required": bool(self.token and token and not tab
                                                  and hmac.compare_digest(token, self.token)
                                                  and not self.pairing.browser.matches(device)),
                 }
+            self.claim_receipt = None
             self.last_presence = now
         ready = self.input_permission(wait=False)
         with self.lock:
@@ -510,7 +537,7 @@ class Remote:
                 self.release_drag()
             raise
         with self.lock:
-            if token != self.token:
+            if token != self.token or self.stop_event.is_set():
                 if delivered and command == {"action": "drag", "active": True}:
                     self.drag_release_pending = True
                 raise RequestError(401, "Access was locked while the command was in progress.")
@@ -531,6 +558,8 @@ class Remote:
         while not stop.wait(0.5):
             now = time.monotonic()
             with self.lock:
+                if stop.is_set():
+                    return
                 try:
                     self.expire(now)
                 except RequestError as error:
@@ -656,6 +685,14 @@ class Handler(BaseHTTPRequestHandler):
         values = self.headers.get_all(TAB_HEADER, [])
         return values[0] if len(values) == 1 and re.fullmatch(r"[A-Za-z0-9_-]{43}", values[0]) else None
 
+    def request_key(self):
+        values = self.headers.get_all(REQUEST_HEADER, [])
+        if not values:
+            return None
+        if len(values) != 1 or not re.fullmatch(r"[0-9a-f]{64}", values[0]):
+            raise RequestError(400, "Invalid pairing request identifier.")
+        return values[0]
+
     def json_body(self):
         if self.headers.get_all("Transfer-Encoding"):
             raise RequestError(400, "Unsupported request framing.")
@@ -688,7 +725,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, content, content_type)
             elif path == "/api/status":
                 status, body = self.server.remote.status(
-                    self.token(), self.tab(), self.token(DEVICE_COOKIE), self.token(APPROVAL_COOKIE)
+                    self.token(), self.tab(), self.token(DEVICE_COOKIE), self.token(APPROVAL_COOKIE), self.request_key()
                 )
                 if status == 401:
                     body["pairing_origins"] = [f"https://{host}" for host in sorted(self.server.hosts)]
@@ -723,10 +760,11 @@ class Handler(BaseHTTPRequestHandler):
                     body=body if self.path == "/api/pair" else None,
                     device=self.token(DEVICE_COOKIE),
                     previous_session=self.token(), previous_tab=self.tab(),
+                    request_key=self.request_key(),
                 )
                 self.json_reply(202, {"ok": True}, cookies=((APPROVAL_COOKIE, pending, APPROVAL_LIFETIME),))
             elif self.path == "/api/claim":
-                token, tab, device = remote.claim(self.token(APPROVAL_COOKIE))
+                token, tab, device = remote.claim(self.token(APPROVAL_COOKIE), self.request_key())
                 cookies = [(COOKIE, token, None), (APPROVAL_COOKIE, "", APPROVAL_LIFETIME)]
                 if device is not None:
                     cookies.append((DEVICE_COOKIE, device, DEVICE_LIFETIME))
@@ -845,6 +883,7 @@ def main():
             bridge, state / "browser.json", on_change=launcher_event if args.launcher else terminal_event,
             gesture_reader=mac_gesture_settings if IS_MAC else None, stop_when_idle=not args.keep_running,
             presence_lifetime=IDLE_LIFETIME if args.allow_background_resume else PRESENCE_LIFETIME,
+            stop_event=stop,
         )
         code = remote.new_code(publish=False)
         urls = [f"https://{name}{f':{port}' if port != 443 else ''}/" for name in names]
@@ -881,12 +920,10 @@ def main():
         sys.exit(f"Lazy Remote could not start: {error}")
     finally:
         stop.set()
+        if server and server.remote:
+            server.remote.shutdown()
         if server:
             server.server_close()
-        if server and server.remote:
-            with server.remote.lock:
-                server.remote.pairing.clear_codes()
-                server.remote.revoke()
         if worker:
             worker.join()
         if bridge:
