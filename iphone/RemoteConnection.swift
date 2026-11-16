@@ -77,6 +77,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
 
     func connect(_ device: Device) {
         guard !connecting else { return }
+        let changingHost = peripheral?.identifier != device.id
         guard pendingLock == nil || peripheral?.identifier == device.id else {
             error = "Confirm Lock on the previous host before choosing another host."
             return
@@ -89,7 +90,7 @@ final class RemoteConnection: NSObject, ObservableObject, @preconcurrency CBCent
         buffer.removeAll()
         connected = false
         input = nil
-        if pendingLock == nil { clearSession() }
+        if changingHost { clearSession() }
         peripheral = device.peripheral
         peripheral?.delegate = self
         autoReconnect = true
