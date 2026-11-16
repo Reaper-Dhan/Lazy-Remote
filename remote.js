@@ -78,13 +78,13 @@ if (qrValue !== null) history.replaceState(null, '', location.pathname + locatio
 
 let paired = false;
 let tab = null;
-let protectBackground = true;
 let remembered = false;
 let awaitingApproval = false;
 let manualPairing = false;
 let ready = false;
 let updatingSession = false;
-let checking = false;
+let checking = null;
+let claiming = false;
 let statusFailures = 0;
 let dragRevision = 0;
 let suspended = false;
@@ -222,7 +222,6 @@ function renderState(state, message) {
     dragPending = false;
     resetGesture();
     updateDrag(false);
-    macSwipeMode = false;
     toggleDrawer(false, false);
   }
 }
@@ -230,6 +229,7 @@ function renderState(state, message) {
 function clearTab() {
   tab = null;
   motionSequence = motionX = motionY = 0;
+  macSwipeMode = false;
 }
 
 function showPairing(message = 'Access locked') {
@@ -285,15 +285,6 @@ function sessionHeaders(body, sessionTab) {
   return headers;
 }
 
-function lockHiddenTab(sessionTab) {
-  if (!sessionTab) return;
-  // Keep this small so the browser can finish sending it after the page is hidden.
-  fetch('/api/disconnect', {
-    method: 'POST', body: '{}', headers: sessionHeaders({}, sessionTab),
-    credentials: 'same-origin', cache: 'no-store', keepalive: true
-  }).catch(() => {});
-}
-
 async function api(path, body, timeout = 7500) {
   const abort = new AbortController();
   const foregroundOnly = path === '/api/status' || path === '/api/cmd';
@@ -317,16 +308,25 @@ async function api(path, body, timeout = 7500) {
 
 async function checkConnection() {
   if (updatingSession || checking || suspended || document.hidden) return;
-  checking = true;
+  const check = {};
+  checking = check;
   const started = revision;
   const dragAtStart = dragRevision;
   try {
     let status = await api('/api/status');
     if (started !== revision || document.hidden) return;
     if (status.status === 401 && status.approved) {
-      const claim = await api('/api/claim', {});
+      claiming = true;
+      let claim;
+      try {
+        claim = await api('/api/claim', {});
+      } finally {
+        claiming = false;
+      }
+      // An approval can arrive while the phone is switching apps.
+      if (claim.status === 200) tab = claim.tab;
+      if (started !== revision || document.hidden) return;
       if (claim.status === 401 || claim.status === 409) {
-        if (started !== revision || document.hidden) return;
         remembered = status.remembered;
         awaitingApproval = false;
         showPairing();
@@ -334,17 +334,12 @@ async function checkConnection() {
         return;
       }
       if (claim.status !== 200) throw new Error('Approval request failed');
-      if (started !== revision || document.hidden) {
-        lockHiddenTab(claim.tab);
-        return;
-      }
-      tab = claim.tab;
-      protectBackground = claim.protect_background !== false;
       status = await api('/api/status');
     }
     if (started !== revision || document.hidden) return;
-    statusFailures = 0;
     if (status.status === 401) {
+      statusFailures = 0;
+      if (tab) revision++;
       clearTab();
       releaseDragOnResume = false;
       remembered = status.remembered;
@@ -360,11 +355,11 @@ async function checkConnection() {
           pairError.textContent = 'This page was reopened. On the computer, click Lock phone to get a fresh pairing QR or code.';
         }
       }
-    } else if (status.status === 200) {
+    } else if (status.status === 200 && typeof status.ready === 'boolean') {
+      statusFailures = 0;
       awaitingApproval = false;
       manualPairing = false;
       paired = true;
-      protectBackground = status.protect_background !== false;
       updateGestureSettings(status.gestures);
       updateAvailableKeys(status.unavailable || []);
       renderState(status.ready ? 'ready' : 'permission', status.ready
@@ -372,20 +367,26 @@ async function checkConnection() {
         : 'Allow mouse and keyboard control in Lazy Remote on the computer.');
       if (!busy && !motionInFlight && dragAtStart === dragRevision) {
         updateDrag(status.dragging);
-        if (releaseDragOnResume && status.ready && status.dragging) {
-          enqueue([{ action: 'drag', active: false }]);
+        if (releaseDragOnResume && status.ready) {
+          if (status.dragging) enqueue([{ action: 'drag', active: false }]);
+          else releaseDragOnResume = false;
         }
       }
-      if (releaseDragOnResume && status.ready && !status.dragging) releaseDragOnResume = false;
     } else {
-      showOffline(status.error || 'Computer input is unavailable. Reconnecting…');
+      connectionFailed(status.error);
     }
   } catch {
-    if (started === revision && (!ready || ++statusFailures >= 2)) showOffline();
+    if (started === revision) connectionFailed();
   } finally {
-    checking = false;
-    if (started !== revision) checkConnection();
+    if (checking === check) {
+      checking = null;
+      if (started !== revision) checkConnection();
+    }
   }
+}
+
+function connectionFailed(message) {
+  if ((!paired && !tab) || ++statusFailures >= 2) showOffline(message);
 }
 
 pairSubmit.disabled = false;
@@ -462,16 +463,12 @@ function suspendControls() {
   if (suspended) return;
   suspended = true;
   revision++;
-  if (protectBackground) {
-    lockHiddenTab(tab);
-    clearTab();
-    paired = false;
-  } else {
-    releaseDragOnResume ||= paired;
-  }
+  releaseDragOnResume ||= dragLocked || dragPending;
   statusFailures = 0;
+  // The browser may freeze an aborted status request until after we return.
+  if (!claiming) checking = null;
   for (const request of foregroundRequests) request.abort();
-  renderState('checking', 'Checking connection…');
+  renderState('checking', 'Reconnecting…');
 }
 
 function resumeControls() {
@@ -543,7 +540,7 @@ async function sendCommand(command, message) {
       paired = false;
       renderState('checking', 'Access locked');
     } else if (response.status === 503) {
-      showOffline(response.error);
+      recoverCommand(response.error);
     } else {
       if (command.action === 'type') {
         preserveText(false);
@@ -552,7 +549,7 @@ async function sendCommand(command, message) {
       showToast(response.error || 'Command failed.');
     }
   } catch {
-    if (started === revision) showOffline('Command could not be confirmed. Reconnecting…');
+    if (started === revision) recoverCommand('Command could not be confirmed. Try again if needed.');
   } finally {
     dragRevision++;
     if (command.action === 'type') sendingText = null;
@@ -561,6 +558,14 @@ async function sendCommand(command, message) {
     if (!paired || started !== revision) checkConnection();
     else drainCommands();
   }
+}
+
+function recoverCommand(message) {
+  preserveText();
+  pending.length = 0;
+  releaseDragOnResume ||= dragLocked || dragPending;
+  showToast(message);
+  checkConnection();
 }
 
 async function sendMotion(dx, dy) {
@@ -579,7 +584,7 @@ async function sendMotion(dx, dy) {
       paired = false;
       renderState('checking', 'Access locked');
     } else if (response.status === 503) {
-      showOffline(response.error);
+      checkConnection();
     }
   } catch {
     // The next sample includes this movement. Keep transient Wi-Fi delays off the status bar.

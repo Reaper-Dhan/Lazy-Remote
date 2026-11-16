@@ -20,7 +20,7 @@ function element() {
   };
 }
 
-async function remote({ unavailable = [], approve = false, protectBackground = true, reply, statusReply,
+async function remote({ unavailable = [], approve = false, claimReply, reply, statusReply,
                         gestureSettings = {}, pairOrigins } = {}) {
   const elements = new Map();
   const bright = element();
@@ -69,9 +69,10 @@ async function remote({ unavailable = [], approve = false, protectBackground = t
         return { status: 202, json: async () => ({}) };
       }
       if (path === '/api/claim') {
+        if (claimReply) await claimReply();
         approved = false;
         authorized = true;
-        return { status: 200, json: async () => ({ tab: 'approved-tab', protect_background: protectBackground }) };
+        return { status: 200, json: async () => ({ tab: 'approved-tab' }) };
       }
       if (path === '/api/disconnect') {
         authorized = false;
@@ -84,7 +85,7 @@ async function remote({ unavailable = [], approve = false, protectBackground = t
           match: pendingPair ? '340287' : null,
         }) };
         return { status: 200, json: async () => ({
-          ready: true, dragging, unavailable, protect_background: protectBackground,
+          ready: true, dragging, unavailable,
           gestures: {
             tap: false, secondary_tap: false, pinch_zoom: true,
             swipes: ['swipe_up', 'swipe_left'], ...gestureSettings,
@@ -321,21 +322,53 @@ test('small drift stays a tap for primary and secondary clicks', async () => {
   assert.deepEqual(pad.commands, [click('left'), click('right')]);
 });
 
-test('hiding a protected tab locks it and returning drops its credential', async () => {
+test('a short app switch pauses input and resumes the same approved tab', async () => {
   const pad = await remote({ approve: true });
   await pad.visibility(true);
-  const lock = pad.requests.find(item => item.path === '/api/disconnect');
-  assert.equal(lock.options.keepalive, true);
-  assert.equal(lock.options.headers['X-Lazy-Remote-Tab'], 'approved-tab');
+  assert.equal(pad.get('remoteControls').hidden, true);
+  pad.left.events.click();
+  assert.equal(pad.commands.length, 0);
   await pad.visibility(false);
   const status = pad.requests.at(-1);
   assert.equal(status.path, '/api/status');
-  assert.equal(status.options.headers['X-Lazy-Remote-Tab'], undefined);
+  assert.equal(status.options.headers['X-Lazy-Remote-Tab'], 'approved-tab');
+  assert.equal(pad.get('remoteControls').hidden, false);
+  assert.equal(pad.requests.some(item => item.path === '/api/disconnect'), false);
+  await pad.get('disconnectBtn').events.click();
+  await settle();
   assert.equal(pad.get('pairTitle').textContent, 'Reconnect');
 });
 
-test('a resumed tab keeps one ordered motion sequence when background resume is allowed', async () => {
-  const pad = await remote({ approve: true, protectBackground: false });
+test('foreground reconnect takes over if the browser freezes an old status request', async () => {
+  let finish;
+  const blocked = new Promise((_, reject) => { finish = reject; });
+  let holdStatus = false;
+  const pad = await remote({ approve: true, statusReply: () => holdStatus ? blocked : undefined });
+  holdStatus = true;
+  await pad.reconnect();
+  await pad.visibility(true);
+  holdStatus = false;
+  await pad.visibility(false);
+  assert.equal(pad.get('connectionStatus').textContent, 'Connected securely');
+  finish(new Error('Background request aborted'));
+  await settle();
+  assert.equal(pad.get('connectionStatus').textContent, 'Connected securely');
+});
+
+test('a desktop approval arriving during an app switch is retained', async () => {
+  let finish;
+  const blocked = new Promise(resolve => { finish = resolve; });
+  const pad = await remote({ approve: true, claimReply: () => blocked });
+  await pad.visibility(true);
+  finish();
+  await settle();
+  await pad.visibility(false);
+  assert.equal(pad.get('connectionStatus').textContent, 'Connected securely');
+  assert.equal(pad.requests.filter(item => item.path === '/api/claim').length, 1);
+});
+
+test('a resumed tab keeps one ordered motion sequence', async () => {
+  const pad = await remote({ approve: true });
   const finger = pad.point(1, 30, 60);
   const moved = { ...finger, clientX: 60 };
   for (let index = 0; index < 2; index++) {
