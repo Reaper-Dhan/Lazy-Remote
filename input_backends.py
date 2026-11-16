@@ -50,6 +50,8 @@ class InputBackend:
 
     def __init__(self):
         self.dragging = False
+        self.pressed_buttons = set()
+        self.failed_releases = set()
         self.remainder_x = self.remainder_y = 0.0
 
     # Primitives implemented by each operating system.
@@ -74,8 +76,33 @@ class InputBackend:
 
     def close(self):
         if self.dragging:
-            self.button("left", False)
-            self.dragging = False
+            self.pressed_buttons.add("left")
+        self.release_buttons(self.pressed_buttons)
+
+    def set_button(self, name, down):
+        try:
+            self.button(name, down)
+        except OSError:
+            if not down:
+                self.failed_releases.add(name)
+            raise
+        if down:
+            self.pressed_buttons.add(name)
+        else:
+            self.pressed_buttons.discard(name)
+            self.failed_releases.discard(name)
+            if name == "left":
+                self.dragging = False
+
+    def release_buttons(self, buttons):
+        error = None
+        for name in sorted(buttons):
+            try:
+                self.set_button(name, False)
+            except OSError as failure:
+                error = failure
+        if error is not None:
+            raise error
 
     def unavailable_keys(self):
         if self.supported_keys is None:
@@ -104,20 +131,23 @@ class InputBackend:
 
     def click(self, name, count):
         for index in range(count):
-            self.button(name, True)
-            time.sleep(0.012)
-            self.button(name, False)
+            self.set_button(name, True)
+            try:
+                time.sleep(0.012)
+            finally:
+                self.set_button(name, False)
             if index + 1 < count:
                 time.sleep(0.025)
 
     def send(self, command):
         action = command["action"]
-        if action == "check_perm":
-            return self.ready()
-        if action == "request_perm":
-            return self.ready()
         if not self.ready():
             return False
+        # Retry uncertain mouse-up events before any new input, including after
+        # returning from a Windows desktop where SendInput was blocked.
+        self.release_buttons(self.failed_releases)
+        if action in ("check_perm", "request_perm"):
+            return True
         if action == "move":
             x = command["dx"] + self.remainder_x
             y = command["dy"] + self.remainder_y
@@ -129,7 +159,7 @@ class InputBackend:
             self.click(command["button"], command["count"])
         elif action == "drag":
             if command["active"] != self.dragging:
-                self.button("left", command["active"])
+                self.set_button("left", command["active"])
                 self.dragging = command["active"]
         elif action == "scroll":
             # Same meaning as macOS: positive dy scrolls up, positive dx scrolls left.
@@ -443,6 +473,8 @@ class LinuxInput(InputBackend):
             os.close(self.fd)
             self.fd = None
             self.dragging = False
+            self.pressed_buttons.clear()
+            self.failed_releases.clear()
             self.remainder_x = self.remainder_y = 0
             self.wheel_rest[:] = [0, 0]
 

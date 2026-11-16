@@ -43,6 +43,53 @@ class Recording(InputBackend):
 
 
 class TranslationTests(unittest.TestCase):
+    def test_failed_click_release_is_retried_during_error_cleanup(self):
+        class Mouse(Recording):
+            def __init__(self):
+                super().__init__()
+                self.held = set()
+                self.fail = 1
+
+            def button(self, name, down):
+                if not down and self.fail:
+                    self.fail -= 1
+                    raise OSError("Windows refused a mouse-up event")
+                if down:
+                    self.held.add(name)
+                else:
+                    self.held.discard(name)
+
+        for button in ("left", "right"):
+            mouse = Mouse()
+            with self.assertRaises(RequestError):
+                LocalInput(mouse).send({"action": "click", "button": button, "count": 1})
+            self.assertFalse(mouse.held)
+            self.assertFalse(mouse.pressed_buttons)
+            self.assertFalse(mouse.failed_releases)
+
+    def test_failed_releases_survive_cleanup_and_block_new_input_until_recovered(self):
+        class Mouse(Recording):
+            refuse = True
+
+            def button(self, name, down):
+                if not down and self.refuse:
+                    raise OSError("Mouse-up blocked")
+                super().button(name, down)
+
+        mouse = Mouse()
+        bridge = LocalInput(mouse)
+        with self.assertRaises(RequestError):
+            bridge.send({"action": "click", "button": "right", "count": 1})
+        self.assertEqual(mouse.pressed_buttons, {"right"})
+        with self.assertRaises(RequestError):
+            bridge.send({"action": "key", "name": "space"})
+        self.assertFalse(any(event[0] == "key" for event in mouse.events))
+        mouse.refuse = False
+        self.assertTrue(bridge.send({"action": "check_perm"}))
+        self.assertEqual(mouse.events[-1], ("button", "right", False))
+        self.assertFalse(mouse.pressed_buttons)
+        self.assertFalse(mouse.failed_releases)
+
     def test_every_remote_key_has_a_mapping(self):
         self.assertEqual(set(KEYMAP), KEYS - SWIPE_SHORTCUTS.keys())
 

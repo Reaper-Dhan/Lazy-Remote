@@ -920,8 +920,14 @@ class LocalInput:
         try:
             return self.backend.send(command)
         except OSError:
-            if self.monitor_drag:
-                self.backend.close(release=False)
+            try:
+                if self.monitor_drag:
+                    self.backend.close(release=False)
+                else:
+                    self.backend.close()
+            except OSError:
+                # Keep failed releases tracked for the next permission check.
+                pass
             raise RequestError(503, PERMISSION_MESSAGE) from None
         except ValueError:
             raise RequestError(503, f"The {HOST_NAME} input helper is unavailable. Try again.") from None
