@@ -43,17 +43,28 @@ If Android refuses to update an earlier preview because the APK signatures diffe
 
 Connect your computer and phone to the same private network.
 
+### Direct Bluetooth preview: iPhone → Mac
+
+The source build includes a native iPhone app and a Mac Bluetooth Low Energy host. No Wi-Fi, hotspot, or phone trust profile is needed for this mode.
+
+1. Build the Mac app from this checkout. On its main screen choose **Direct Bluetooth**, then **Start server**. Grant Bluetooth access when macOS asks. Accessibility access is still required for input.
+2. Install the native iPhone preview using the [Xcode project and setup instructions](iphone/README.md). It is not distributed through the App Store or TestFlight yet.
+3. In the iPhone app, tap **Find hosts**, choose the Mac, and accept system Bluetooth pairing. Enter the code shown by the Mac or use **Scan pairing QR** inside the iPhone app. Compare the matching number and approve on the Mac.
+4. Use the trackpad, click, scrolling, typing, media, and enabled Mac shortcut buttons. **Lock** on the phone or **Lock phone** on the Mac ends access. The native preview retains session credentials in memory only; relaunching requires approval again.
+
+This direct transport currently supports **iPhone/iPad → Mac only**. Windows, Linux, Android controllers, and Android TV retain the network transport. Native multi-finger gestures and full browser feature parity are not part of this preview. Direct Bluetooth has compile checks and server protocol tests, but still needs a physical iPhone/Mac pairing and reconnect test before it should be treated as a stable release.
+
 ### Use Bluetooth tethering without Wi-Fi
 
 Lazy Remote can use an IP connection carried over Bluetooth. It keeps the same browser remote, HTTPS certificate, and approval on the host.
 
-1. On your phone, enable Bluetooth tethering or Personal Hotspot. Join that hotspot **over Bluetooth** from the computer. On an iPhone, Personal Hotspot requires a cellular plan that supports tethering. See [Apple’s Bluetooth hotspot instructions](https://support.apple.com/guide/iphone/share-your-internet-connection-iph45447ca6/27/ios/27) and [Microsoft’s Bluetooth network instructions](https://support.microsoft.com/en-gb/windows/hardware/bluetooth/connect-to-a-bluetooth-network-in-windows).
-2. Start Lazy Remote after the Bluetooth network connects. If the phone address still points to another connection, stop the server and open **Connection and session settings**. Enter the **host’s IPv4 address** on the Bluetooth network in **Host IPv4 address**, then start the server. Look for the Bluetooth network adapter in system network settings. On Windows you can also use `ipconfig`, and on Linux `ip -4 address`.
+1. In the desktop launcher, open **Bluetooth setup** for the connection guide. On your phone, enable Bluetooth tethering or Personal Hotspot. Join that hotspot **over Bluetooth** from the computer. On an iPhone, Personal Hotspot requires a cellular plan that supports tethering. See [Apple’s Bluetooth hotspot instructions](https://support.apple.com/guide/iphone/share-your-internet-connection-iph45447ca6/27/ios/27) and [Microsoft’s Bluetooth network instructions](https://support.microsoft.com/en-gb/windows/hardware/bluetooth/connect-to-a-bluetooth-network-in-windows).
+2. On Mac, choose **Wi-Fi / tethering**. Start Lazy Remote after the Bluetooth network connects. If the phone address still points to another connection, stop the server and open **Connection and session settings**. Enter the **host’s IPv4 address** on the Bluetooth network in **Host IPv4 address**, then start the server. Look for the Bluetooth network adapter in system network settings. On Windows you can also use `ipconfig`, and on Linux `ip -4 address`.
 3. Open the new numeric HTTPS address shown by Lazy Remote on the phone and approve the connection on the host. An already trusted certificate root works across address changes. A new browser address can require pairing again.
 
 On Linux, the desktop must support joining a Bluetooth Personal Area Network. On Android TV, the hardware and firmware must expose a Bluetooth network connection as the TV’s active network. Bluetooth pairing alone does not create that connection.
 
-The iPhone browser remote uses this Bluetooth network connection. Direct Bluetooth Low Energy control without tethering would require a native iPhone app.
+The iPhone browser remote uses this Bluetooth network connection. For pairing directly without tethering, use the native iPhone/Mac preview above.
 
 ### Linux input access
 
@@ -119,7 +130,8 @@ On macOS 27, switching Spaces briefly opens Mission Control and selects the neig
 
 ## Security
 
-- The server listens on one private IPv4 address. Use Lazy Remote on a network you trust and keep its port off the public internet.
+- The network server listens on one private IPv4 address. Direct Bluetooth mode binds the HTTP server to loopback and requires encrypted Bluetooth characteristics plus the same host approval, session expiry, and command validation. Bluetooth pairing is separate from approval and is not a passkey.
+- In network mode, use Lazy Remote on a network you trust and keep its port off the public internet.
 - Pairing codes are single-use and expire after **10 minutes**. An access request expires after **90 seconds** and requires approval on the computer.
 - **Remember this browser** skips the QR scan for **30 days** on the same browser and hostname. Each new session still requires approval on the computer.
 - Approval applies to a single open tab. The phone pauses input while the page is hidden. The same tab reconnects automatically if it checks in again within **one minute**. Enable **Extend phone reconnect window** before starting the server to allow up to **five minutes**. Reloading the tab requires a new approval. A remembered browser can request it right away.
@@ -151,6 +163,8 @@ node --test test_remote_js.cjs
 
 **Mac app.** You need the Xcode Command Line Tools with Swift 5.9 or later. `./"Build Launcher.command"` makes a universal app (Apple Silicon and Intel) with the server inside it and packs `dist/Lazy-Remote-macOS.zip`.
 
+**Native iPhone app.** Open [iphone/Lazy Remote.xcodeproj](iphone/Lazy%20Remote.xcodeproj) in Xcode 16 or later. See [iphone/README.md](iphone/README.md) for signing, installation, and the current preview limits. CI compiles this target for iOS without signing.
+
 **Android TV app.** With JDK 17 or 21 and Android SDK platforms for API 36 installed, run `./android-tv/gradlew -p android-tv :app:assembleDebug` (use `android-tv\gradlew.bat` on Windows). The debug APK is written to `android-tv/app/build/outputs/apk/debug/app-debug.apk`.
 
 **Windows and Linux apps.** Build on the target system, because PyInstaller can’t cross-compile:
@@ -162,13 +176,15 @@ python packaging/build_desktop.py
 
 **Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) tests and builds the Mac, Windows, and Linux packages and produces an Android TV preview on every push. Tags such as `v1.2.0` publish the three desktop downloads with `SHA256SUMS.txt` and the notes in [packaging/release-notes.md](packaging/release-notes.md). The Android TV preview is available as a workflow artifact.
 
-The unit tests use temporary certificates and substitute input devices. Release checks also start the packaged server on loopback to verify the phone profile, HTTPS, pairing, approval, and revocation.
+The unit tests use temporary certificates and substitute input devices. Package checks also start the bundled server on loopback to verify the phone profile, HTTPS, native Bluetooth message dispatch, approval, and revocation. These do not replace tests on physical Bluetooth hardware.
 
 The phone scanner bundles [jsQR 1.4.0](https://github.com/cozmo/jsQR) under the [Apache 2.0 license](vendor/jsQR-LICENSE.txt).
 
 | Component | Role |
 | --- | --- |
 | [Launcher.swift](Launcher.swift) | Mac launcher: SwiftUI window, QR code, approval, and setup guide |
+| [BluetoothHost.swift](BluetoothHost.swift) and [bluetooth_transport.py](bluetooth_transport.py) | Encrypted Mac BLE characteristics and dispatch into host sessions |
+| [iphone/](iphone/) | Native iPhone/iPad Bluetooth client preview |
 | [desktop_launcher.py](desktop_launcher.py) | Windows and Linux launcher: the same window in Tk |
 | [auth.py](auth.py) and [server.py](server.py) | Pairing, session limits, HTTPS endpoints, and command validation |
 | [tls_setup.py](tls_setup.py) | Local certificates and phone trust profiles |
