@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 
+from auth import RequestError
+
 
 # Remote key names -> (modifiers, key). The Mac's Command shortcuts become Ctrl,
 # and its browser Back/Forward (Cmd+arrow) become Alt+arrow.
@@ -416,15 +418,14 @@ class LinuxInput(InputBackend):
         if self.type_with_tool(value):
             return
         # uinput sends key positions, not characters, so this assumes a US layout.
-        # Characters outside it are skipped.
+        if any(char not in self.CHARACTERS for char in value):
+            raise RequestError(422, "This Linux keyboard setup cannot type some characters. "
+                               "Use xdotool on X11 or wtype on supported Wayland desktops.")
         for char in value:
-            entry = self.CHARACTERS.get(char)
-            if entry is None:
-                continue
             if self.locked():
                 self.close(release=False)
                 raise OSError("Typing stopped because the desktop became unavailable.")
-            shift, name = entry
+            shift, name = self.CHARACTERS[char]
             self.press(("shift",) if shift else (), name)
             time.sleep(0.004)
 

@@ -156,6 +156,12 @@ class LinuxTests(unittest.TestCase):
         self.assertEqual(len(setup), 92)  # sizeof(struct uinput_setup)
         self.assertTrue(setup[8:].startswith(b"Lazy Remote\0"))
 
+    def test_unsupported_fallback_text_is_rejected_before_any_keys(self):
+        with self.assertRaises(RequestError) as error:
+            LocalInput(self.backend).send({"action": "type", "text": "aé"})
+        self.assertEqual(error.exception.status, 422)
+        self.assertEqual(self.events(), [])
+
     def test_no_input_while_the_session_is_locked(self):
         self.locked = True
         self.assertFalse(self.backend.send({"action": "key", "name": "space"}))
@@ -169,8 +175,8 @@ class LinuxTests(unittest.TestCase):
         backend = LinuxInput(opener=refuse, ioctl=self.device.ioctl, locked=lambda: False, typer=[])
         self.assertFalse(backend.send({"action": "check_perm"}))
 
-    def test_typing_uses_shift_and_skips_unknown_characters(self):
-        self.backend.text("A!é")
+    def test_supported_fallback_text_uses_shift(self):
+        self.backend.text("A!")
         key = LinuxInput.EV_KEY
         shift, a, one = LinuxInput.KEY["shift"], LinuxInput.KEY["a"], LinuxInput.KEY["1"]
         self.assertEqual(self.events(), [
