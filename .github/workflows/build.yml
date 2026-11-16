@@ -140,7 +140,8 @@ jobs:
       - name: Build and verify the Android TV preview
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
-          ./android-tv/gradlew -p android-tv :app:assembleDebug
+          unset ANDROID_SDK_ROOT
+          ./android-tv/gradlew -p android-tv :app:assembleDebug :app:lintDebug
           mkdir -p dist
           cp android-tv/app/build/outputs/apk/debug/app-debug.apk dist/Lazy-Remote-Android-TV-preview.apk
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify dist/Lazy-Remote-Android-TV-preview.apk
