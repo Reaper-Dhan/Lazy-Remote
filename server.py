@@ -4,6 +4,7 @@ import errno
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
+import io
 import json
 import math
 import os
@@ -48,6 +49,7 @@ REQUEST_HEADER = "X-Lazy-Remote-Request"
 DRAG_LIFETIME = 15
 MAX_BODY = 4096
 CONNECTION_TIMEOUT = 5
+REQUEST_READ_TIMEOUT = 5
 MAX_DELTA = 16384
 MOTION_POSITION_LIMIT = 2 ** 32
 DEFAULT_GESTURES = {
@@ -497,7 +499,8 @@ class Remote:
             cancelled = any(hmac.compare_digest(request_key, key)
                             for key, until in self.cancelled_requests if until > now)
             credentials = bool(token and tab)
-            if not (pending or receipt or cancelled or credentials):
+            empty = self.token is None and self.pairing.pending is None
+            if not (pending or receipt or cancelled or credentials or empty):
                 raise RequestError(409, "Could not confirm which request to lock. Use Lock phone on the host.")
             matches = (credentials and self.token is not None
                        and hmac.compare_digest(token, self.token) and hmac.compare_digest(tab, self.tab))
@@ -652,11 +655,40 @@ class RemoteServer(ThreadingHTTPServer):
             self.slots.release()
 
 
+class RequestReader(io.RawIOBase):
+    """Apply one absolute deadline across every receive in headers and body."""
+
+    def __init__(self, connection):
+        super().__init__()
+        self.connection = connection
+        self.deadline = 0
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("HTTP request read deadline exceeded.")
+        self.connection.settimeout(min(CONNECTION_TIMEOUT, remaining))
+        return self.connection.recv_into(buffer)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "LazyRemote"
     sys_version = ""
     disable_nagle_algorithm = True
+
+    def setup(self):
+        super().setup()
+        self.rfile.close()
+        self.request_reader = RequestReader(self.connection)
+        self.rfile = io.BufferedReader(self.request_reader)
+
+    def handle_one_request(self):
+        self.request_reader.deadline = time.monotonic() + REQUEST_READ_TIMEOUT
+        super().handle_one_request()
 
     def log_message(self, *_):
         pass
@@ -678,6 +710,8 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def reply(self, status, body, content_type="application/json", cookies=()):
+        # Slow request reads must not shorten the independent response timeout.
+        self.connection.settimeout(CONNECTION_TIMEOUT)
         self.send_response(status)
         if status >= 400:
             self.close_connection = True

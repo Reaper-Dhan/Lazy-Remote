@@ -5,6 +5,7 @@ from pathlib import Path
 import plistlib
 import runpy
 import ssl
+import socket
 import stat
 import tempfile
 import threading
@@ -57,6 +58,71 @@ class RemoteSecurityTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join()
+
+    def test_trickled_headers_cannot_hold_all_connection_slots(self):
+        from unittest.mock import patch
+        self.server.slots = threading.BoundedSemaphore(2)
+        clients = []
+        with patch("server.REQUEST_READ_TIMEOUT", 0.25):
+            try:
+                for _ in range(2):
+                    client = self.trust.wrap_socket(
+                        socket.create_connection(("127.0.0.1", self.port), timeout=2),
+                        server_hostname="127.0.0.1",
+                    )
+                    clients.append(client)
+                    client.sendall(f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nX-Slow: ".encode())
+                # Data keeps arriving well inside the five-second idle timeout.
+                # Only the absolute deadline can free these two slots.
+                for _ in range(10):
+                    for client in clients:
+                        try:
+                            client.sendall(b"a")
+                        except OSError:
+                            pass
+                    time.sleep(0.05)
+                self.assertEqual(self.request("/api/status")[0], 401)
+                for client in clients:
+                    self.assertEqual(client.recv(1), b"")
+            finally:
+                for client in clients:
+                    client.close()
+
+    def test_trickled_body_has_the_same_absolute_request_deadline(self):
+        from unittest.mock import patch
+        with patch("server.REQUEST_READ_TIMEOUT", 0.25):
+            with self.trust.wrap_socket(
+                socket.create_connection(("127.0.0.1", self.port), timeout=2),
+                server_hostname="127.0.0.1",
+            ) as client:
+                client.sendall((f"POST /api/pair HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                                f"Origin: {self.origin}\r\nContent-Type: application/json\r\n"
+                                "Content-Length: 100\r\n").encode())
+                time.sleep(0.15)
+                client.sendall(b"\r\n")
+                for _ in range(10):
+                    try:
+                        client.sendall(b" ")
+                    except OSError:
+                        pass
+                    time.sleep(0.05)
+                self.assertEqual(client.recv(1), b"")
+                self.assertIsNone(self.remote.pairing.pending)
+
+    def test_complete_requests_can_reuse_the_same_https_connection(self):
+        connection = http.client.HTTPSConnection("127.0.0.1", self.port, context=self.trust, timeout=2)
+        try:
+            peer = None
+            for path in ("/", "/manifest.webmanifest", "/remote.js"):
+                connection.request("GET", path)
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertTrue(response.read())
+                if peer is None:
+                    peer = connection.sock
+                self.assertIs(connection.sock, peer)
+        finally:
+            connection.close()
 
     def request(self, path, body=None, *, cookie=None, headers=None, context=None):
         connection = http.client.HTTPSConnection("127.0.0.1", self.port, context=context or self.trust, timeout=10)
@@ -581,6 +647,7 @@ class BluetoothSecurityTests(unittest.TestCase):
         self.assertIsNone(self.remote.token)
 
     def test_lock_acknowledgements_identify_the_target_and_allow_retries(self):
+        self.assertTrue(self.request("cancel", key="c" * 64)["locked"])
         session = self.pair()
         self.request("status", **session)
         self.assertEqual(self.request("cancel", key="b" * 64)["status"], 409)
