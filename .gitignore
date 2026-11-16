@@ -5,6 +5,8 @@
 /build/
 /.cache/
 /input_helper
+xcuserdata/
+*.xcuserstate
 /.launcher-build.*/
 /.helper-build-*/
 /.build-*/

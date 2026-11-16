@@ -113,6 +113,19 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  build-iphone:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compile the native iPhone Bluetooth preview
+        run: >-
+          xcodebuild -project "iphone/Lazy Remote.xcodeproj" -scheme "Lazy Remote"
+          -sdk iphoneos -configuration Release -derivedDataPath "$RUNNER_TEMP/iphone-build"
+          CODE_SIGNING_ALLOWED=NO build
+
   build-android-tv:
     needs: test
     runs-on: ubuntu-latest

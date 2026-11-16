@@ -16,9 +16,10 @@ private struct ServerEvent: Decodable {
     let match: String?
     let approved: Bool?
     let message: String?
+    let response: String?
 
     enum CodingKeys: String, CodingKey {
-        case event, urls, certificates, fingerprint, loopback, code, qr, paired, remembered, match, approved, message
+        case event, urls, certificates, fingerprint, loopback, code, qr, paired, remembered, match, approved, message, response
         case inputReady = "input_ready"
     }
 }
@@ -40,6 +41,8 @@ private final class Launcher: ObservableObject {
     @Published private(set) var urls: [String] = []
     @Published var address = ""
     @Published var bindAddress = ""
+    @Published var directBluetooth = false
+    let bluetooth = BluetoothHost()
     @Published private(set) var code: String?
     @Published private(set) var qr: String?
     @Published private(set) var match: String?
@@ -62,6 +65,7 @@ private final class Launcher: ObservableObject {
 
     private var process: Process?
     private var controls: FileHandle?
+    private let controlQueue = DispatchQueue(label: "org.lazyremote.launcher.controls")
 
     /// The server ships inside the app (Contents/Resources/server). A source
     /// checkout next to the app is used as a fallback for development.
@@ -125,7 +129,7 @@ private final class Launcher: ObservableObject {
         let output = Pipe()
         server.executableURL = URL(fileURLWithPath: python)
         var arguments = ["-E", "-s", "-B", "-u", script.path, "--launcher"]
-        let bind = bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bind = directBluetooth ? "127.0.0.1" : bindAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         if !bind.isEmpty { arguments += ["--bind", bind] }
         if keepRunning { arguments.append("--keep-running") }
         if allowBackgroundResume { arguments.append("--allow-background-resume") }
@@ -145,6 +149,9 @@ private final class Launcher: ObservableObject {
         phase = .starting
         process = server
         controls = input.fileHandleForWriting
+        bluetooth.receive = { [weak self] packet in
+            self?.send("bluetooth " + packet)
+        }
 
         let stream = output.fileHandleForReading
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -169,16 +176,22 @@ private final class Launcher: ObservableObject {
     func stop() {
         guard let process, phase == .starting || phase == .running else { return }
         phase = .stopping
+        bluetooth.stop()
         try? controls?.close()
         if process.isRunning { process.terminate() }
     }
 
     func send(_ command: String) {
         guard phase == .running, let controls else { return }
-        do {
-            try controls.write(contentsOf: Data((command + "\n").utf8))
-        } catch {
-            notice = "The server stopped responding. Stop and start it again."
+        controlQueue.async { [weak self] in
+            do {
+                try controls.write(contentsOf: Data((command + "\n").utf8))
+            } catch {
+                Task { @MainActor [weak self] in
+                    guard let self, self.controls === controls, self.phase == .running else { return }
+                    self.notice = "The server stopped responding. Stop and start it again."
+                }
+            }
         }
     }
 
@@ -196,6 +209,10 @@ private final class Launcher: ObservableObject {
     }
 
     private func receive(_ event: ServerEvent) {
+        if event.event == "bluetooth" {
+            if let response = event.response { bluetooth.reply(response) }
+            return
+        }
         if event.event == "notice" {
             notice = event.message
             return
@@ -213,6 +230,7 @@ private final class Launcher: ObservableObject {
             loopback = event.loopback == true
             inputReady = event.inputReady
             phase = .running
+            if directBluetooth { bluetooth.start() }
         }
         code = event.code
         qr = event.qr
@@ -228,6 +246,7 @@ private final class Launcher: ObservableObject {
     }
 
     private func didStop(status: Int32) {
+        bluetooth.stop()
         if phase != .stopping, status != 0, notice == nil {
             notice = "The server closed unexpectedly. Try Start again."
         }
@@ -289,6 +308,56 @@ private struct NetworkAddressField: View {
     }
 }
 
+private struct BluetoothConnectionView: View {
+    @ObservedObject var bluetooth: BluetoothHost
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Direct Bluetooth", systemImage: "antenna.radiowaves.left.and.right").font(.headline)
+            Text(bluetooth.status).foregroundStyle(.secondary)
+            Text("Use the native Lazy Remote iPhone app. Pair with this Mac, then enter the pairing code below or scan its QR.")
+                .font(.caption)
+        }
+    }
+}
+
+private struct BluetoothSetupGuide: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Label("Connect without Wi-Fi", systemImage: "antenna.radiowaves.left.and.right")
+                        .font(.title2.bold())
+                    Text("Direct Bluetooth · native iPhone app").font(.headline)
+                    Text("Stop the server, choose Direct Bluetooth, and start it again. Open the native Lazy Remote iPhone app, tap Find hosts, and choose this Mac. Accept system pairing, enter the host code or scan its QR, then approve the matching number on this Mac.")
+                    Text("The iPhone app is a source preview. Install it through Xcode; it is not available in the App Store yet.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Text("Bluetooth tethering · browser / PWA").font(.headline)
+                    Text("Enable Personal Hotspot on iPhone or Bluetooth tethering on Android. Join that Bluetooth network from this Mac in system settings. Pairing alone does not create a network.")
+                    Text("Choose Wi-Fi / tethering in Lazy Remote. If needed, enter this Mac’s IPv4 address from the Bluetooth network settings, then start the server. Open its HTTPS address on the phone and follow the usual certificate and approval steps.")
+                    HStack {
+                        Button("Open Bluetooth Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.BluetoothSettings") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        Button("Open Network Settings") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.Network-Settings.extension") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
+        }
+        .padding(24).frame(width: 520, height: 560)
+    }
+}
+
 private struct SetupGuide: View {
     @ObservedObject var launcher: Launcher
     @Environment(\.dismiss) private var dismiss
@@ -300,7 +369,9 @@ private struct SetupGuide: View {
 
             step(1, "Start the server") {
                 if launcher.phase == .stopped {
+                    Toggle("Direct Bluetooth with the iPhone app", isOn: $launcher.directBluetooth)
                     NetworkAddressField(address: $launcher.bindAddress)
+                        .disabled(launcher.directBluetooth)
                     Button("Start server", action: launcher.start).buttonStyle(.borderedProminent)
                     Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)
                     Text("Resume the same tab within one minute, or up to five minutes with this on.")
@@ -426,6 +497,7 @@ private struct LauncherView: View {
     @State private var copiedAddress: String?
     @State private var showGuide = false
     @State private var showSettings = false
+    @State private var showBluetooth = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -438,6 +510,16 @@ private struct LauncherView: View {
             }
             switch launcher.phase {
             case .stopped:
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Connection", selection: $launcher.directBluetooth) {
+                        Text("Wi-Fi / tethering").tag(false)
+                        Text("Direct Bluetooth").tag(true)
+                    }.pickerStyle(.segmented)
+                    Text(launcher.directBluetooth ? "Requires the native iPhone app. No Wi-Fi or trust profile needed."
+                         : "Use the browser remote over Wi-Fi or a Bluetooth tethering network.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Bluetooth setup…") { showBluetooth = true }
+                }.remoteCard()
                 startCard
                 sessionSettings
             case .starting, .stopping:
@@ -457,7 +539,11 @@ private struct LauncherView: View {
                     }
                     .remoteCard()
                 }
-                connection.remoteCard()
+                if launcher.directBluetooth {
+                    BluetoothConnectionView(bluetooth: launcher.bluetooth).remoteCard()
+                } else {
+                    connection.remoteCard()
+                }
                 VStack(alignment: .leading, spacing: 10) { pairing }
                     .remoteCard()
             }
@@ -465,6 +551,7 @@ private struct LauncherView: View {
         .padding(22)
         .frame(width: 560, alignment: .leading)
         .sheet(isPresented: $showGuide) { SetupGuide(launcher: launcher) }
+        .sheet(isPresented: $showBluetooth) { BluetoothSetupGuide() }
         .onAppear { launcher.showWindow = { openWindow(id: "launcher") } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             launcher.send("check_access")
@@ -521,6 +608,7 @@ private struct LauncherView: View {
         DisclosureGroup("Connection and session settings", isExpanded: $showSettings) {
             VStack(alignment: .leading, spacing: 12) {
                 NetworkAddressField(address: $launcher.bindAddress)
+                    .disabled(launcher.directBluetooth)
                 Divider()
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Extend phone reconnect window", isOn: $launcher.allowBackgroundResume)

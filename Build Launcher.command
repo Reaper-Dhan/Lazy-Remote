@@ -35,6 +35,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Connect your paired phone to Lazy Remote on this Mac.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Connect your iPhone directly to Lazy Remote without Wi-Fi.</string>
 </dict>
 </plist>
 PLIST
@@ -51,7 +53,7 @@ universal() {
     rm -f "$staging/arm64.bin" "$staging/x86_64.bin"
 }
 
-universal "$app/Contents/MacOS/LazyRemote" -parse-as-library Launcher.swift
+universal "$app/Contents/MacOS/LazyRemote" -parse-as-library Launcher.swift BluetoothHost.swift
 
 # Everything the server needs ships inside the app, so users only download the app.
 server="$app/Contents/Resources/server"
