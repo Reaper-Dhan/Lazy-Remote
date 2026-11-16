@@ -494,6 +494,14 @@ function suspendControls() {
   // The browser may freeze an aborted status request until after we return.
   if (!claiming) checking = null;
   for (const request of foregroundRequests) request.abort();
+  if (releaseDragOnResume && tab) {
+    // Keep the session, but release a held mouse button when the browser freezes.
+    // The host's drag timeout remains the fallback if this packet cannot leave.
+    fetch('/api/cmd', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true,
+      headers: sessionHeaders({}, tab), body: JSON.stringify({ action: 'drag', active: false })
+    }).catch(() => {});
+  }
   renderState('checking', 'Reconnecting…');
 }
 
@@ -598,11 +606,20 @@ async function sendMotion(dx, dy) {
   motionX += dx;
   motionY += dy;
   const started = revision;
+  const command = { action: 'motion', seq: ++motionSequence, dx: motionX, dy: motionY };
   motionInFlight++;
   try {
-    const response = await api('/api/cmd', {
-      action: 'motion', seq: ++motionSequence, dx: motionX, dy: motionY
-    }, 750);
+    let response;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await api('/api/cmd', command, 750);
+        break;
+      } catch {
+        // Retrying a sequence is idempotent on the host. Recover the final sample
+        // too, when the finger has stopped and no newer sample will follow it.
+        if (attempt || started !== revision || document.hidden || !ready || command.seq !== motionSequence) return;
+      }
+    }
     if (started !== revision) return;
     if (response.status === 401) {
       revision++;

@@ -513,3 +513,36 @@ test('PWA offline fallback only handles the public offline shell', async () => {
   assert.equal(fetchFromWorker('/api/cmd', 'cors', 'POST'), undefined);
   assert.equal(fetchFromWorker('/remote.js'), undefined);
 });
+
+test('the final lost motion sample retries the same cumulative sequence only once', async () => {
+  let failures = 1;
+  const pad = await remote({ reply(command) {
+    if (command.action === 'motion' && failures-- > 0) throw new Error('Lost packet');
+  } });
+  const finger = pad.point(1, 30, 60);
+  const moved = { ...finger, clientX: 90 };
+  pad.touch('touchstart', [finger]);
+  pad.touch('touchmove', [moved]);
+  pad.touch('touchend', [], [moved]);
+  await pad.step();
+  assert.equal(pad.commands.length, 2);
+  assert.equal(pad.commands[0].action, 'motion');
+  assert.deepEqual(pad.commands[1], pad.commands[0]);
+  await pad.step();
+  assert.equal(pad.commands.length, 2);
+});
+
+test('backgrounding releases a held mouse button without revoking the session', async () => {
+  const pad = await remote({ approve: true });
+  pad.get('dragBtn').events.click();
+  await settle();
+  assert.equal(pad.commands.at(-1).active, true);
+  await pad.visibility(true);
+  const release = pad.requests.at(-1);
+  assert.equal(release.options.keepalive, true);
+  assert.equal(release.options.headers['X-Lazy-Remote-Tab'], 'approved-tab');
+  assert.deepEqual(pad.commands.at(-1), { action: 'drag', active: false });
+  await pad.visibility(false);
+  assert.equal(pad.get('remoteControls').hidden, false);
+  assert.equal(pad.requests.some(request => request.path === '/api/disconnect'), false);
+});
