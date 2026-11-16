@@ -10,8 +10,9 @@ import sys
 
 IS_MAC = sys.platform == "darwin"
 IS_WINDOWS = os.name == "nt"
-IS_LINUX = sys.platform.startswith("linux")
-HOST_NAME = "Mac" if IS_MAC else "PC"
+IS_ANDROID = sys.platform == "android" or hasattr(sys, "getandroidapilevel")
+IS_LINUX = sys.platform.startswith("linux") and not IS_ANDROID
+HOST_NAME = "TV" if IS_ANDROID else "Mac" if IS_MAC else "PC"
 
 LAN_NETWORKS = tuple(
     ipaddress.ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")

@@ -12,6 +12,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
+from platform_support import HOST_NAME
+
 
 PAIR_LIFETIME = 10 * 60
 APPROVAL_LIFETIME = 90
@@ -69,7 +71,7 @@ class RememberedBrowser:
                     self.path.unlink(missing_ok=True)
                 self.record = None
         except OSError:
-            raise RequestError(503, "Could not update remembered browser access on the Mac.") from None
+            raise RequestError(503, f"Could not update remembered browser access on the {HOST_NAME}.") from None
         return token
 
 

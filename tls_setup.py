@@ -11,7 +11,7 @@ import tempfile
 import time
 import uuid
 
-from platform_support import IS_MAC, IS_WINDOWS, LAN_NETWORKS, default_state_dir, lock_file
+from platform_support import IS_ANDROID, IS_MAC, IS_WINDOWS, LAN_NETWORKS, default_state_dir, lock_file
 
 try:  # Bundled with the Windows and Linux apps; the Mac uses its built-in OpenSSL instead.
     from cryptography import x509
@@ -145,15 +145,15 @@ def _cryptography_leaf(directory, names):
     _write_certificate(directory, "server", server, server_key)
 
 
-def make_identity(directory, names, existing=None):
+def make_identity(directory, names, existing=None, *, build_issuer=None, build_leaf=None):
     if existing is None:
-        (_cryptography_issuer if x509 is not None else _openssl_issuer)(directory)
+        (build_issuer or (_cryptography_issuer if x509 is not None else _openssl_issuer))(directory)
         write_phone_files(directory)
     else:
         for name in ISSUER_FILES:
             shutil.copy2(existing / name, directory / name)
         shutil.copytree(existing / "phone", directory / "phone")
-    (_cryptography_leaf if x509 is not None else _openssl_leaf)(directory, names)
+    (build_leaf or (_cryptography_leaf if x509 is not None else _openssl_leaf))(directory, names)
     with (directory / "server.pem").open("ab") as chain:
         chain.write((directory / "issuer.pem").read_bytes())
     (directory / "names").write_text("\n".join(names), encoding="ascii")
@@ -164,19 +164,21 @@ def write_phone_files(directory):
     phone = directory / "phone"
     phone.mkdir()
     root_der = ssl.PEM_cert_to_DER_cert((directory / "root.pem").read_text(encoding="ascii"))
+    identifier = "local.couch-remote." + hashlib.sha256(root_der).hexdigest()[:24]
+    label = "Lazy Remote TV" if IS_ANDROID else "Lazy Remote"
     (phone / "Lazy Remote Root.cer").write_bytes(root_der)
     profile = {
         "PayloadType": "Configuration",
         "PayloadVersion": 1,
-        "PayloadIdentifier": "local.couch-remote",
+        "PayloadIdentifier": identifier,
         "PayloadUUID": str(uuid.uuid4()),
-        "PayloadDisplayName": "Lazy Remote",
+        "PayloadDisplayName": label,
         "PayloadContent": [{
             "PayloadType": "com.apple.security.root",
             "PayloadVersion": 1,
-            "PayloadIdentifier": "local.couch-remote.root",
+            "PayloadIdentifier": identifier + ".root",
             "PayloadUUID": str(uuid.uuid4()),
-            "PayloadDisplayName": "Lazy Remote Local Root",
+            "PayloadDisplayName": label + " Local Root",
             "PayloadCertificateFileName": "Lazy Remote Root.cer",
             "PayloadContent": root_der,
         }],
@@ -274,7 +276,8 @@ def _current_dir(state_dir):
     return state_dir / "certificates"
 
 
-def tls_identity(address, hostname, renew, state_dir=STATE_DIR):
+def tls_identity(address, hostname, renew, state_dir=STATE_DIR, *, build_identity=make_identity,
+                 is_expired=certificate_expired):
     state_dir = private_state_dir(state_dir)
     with (state_dir / "lock").open("a") as lock:
         lock_file(lock)
@@ -285,13 +288,13 @@ def tls_identity(address, hostname, renew, state_dir=STATE_DIR):
         existing_names = (current / "names").read_text(encoding="ascii").splitlines() if current.exists() else []
         replace_root = (renew or not existing_names or _identity_version(current) != IDENTITY_VERSION
                         or any(not (current / name).is_file() for name in ISSUER_FILES)
-                        or certificate_expired(current / "root.pem", within_days=7)
-                        or certificate_expired(current / "issuer.pem", within_days=7))
+                        or is_expired(current / "root.pem", within_days=7)
+                        or is_expired(current / "issuer.pem", within_days=7))
         if (replace_root or not set(names).issubset(existing_names)
-                or certificate_expired(current / "server.pem", within_days=7)):
+                or is_expired(current / "server.pem", within_days=7)):
             directory = Path(tempfile.mkdtemp(prefix="tls-", dir=state_dir))
             try:
-                make_identity(directory, names, existing=None if replace_root else current)
+                build_identity(directory, names, existing=None if replace_root else current)
                 context = _server_context(directory)
                 previous = current.resolve() if current.exists() else None
                 _point_current_at(state_dir, state_dir / "certificates", directory)

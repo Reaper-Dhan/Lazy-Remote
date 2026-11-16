@@ -255,6 +255,8 @@ class InputBridge:
 
 
 class Remote:
+    accepts_command = staticmethod(valid_command)
+
     def __init__(self, bridge, browser_path=None, on_change=None, gesture_reader=None,
                  stop_when_idle=True, presence_lifetime=PRESENCE_LIFETIME):
         self.bridge = bridge
@@ -470,7 +472,7 @@ class Remote:
         with self.lock:
             now = time.monotonic()
             self.require_session(token, tab, now)
-            if not valid_command(command):
+            if not self.accepts_command(command):
                 raise RequestError(400, "Invalid remote command.")
             self.command_budget = min(120, self.command_budget + 90 * (now - self.budget_updated))
             self.budget_updated = now
