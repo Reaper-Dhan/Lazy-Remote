@@ -145,7 +145,7 @@ def _cryptography_leaf(directory, names):
     _write_certificate(directory, "server", server, server_key)
 
 
-def make_identity(directory, names, existing=None, *, build_issuer=None, build_leaf=None):
+def make_identity(directory, names, existing=None, *, build_issuer=None, build_leaf=None, version=IDENTITY_VERSION):
     if existing is None:
         (build_issuer or (_cryptography_issuer if x509 is not None else _openssl_issuer))(directory)
         write_phone_files(directory)
@@ -154,10 +154,13 @@ def make_identity(directory, names, existing=None, *, build_issuer=None, build_l
             shutil.copy2(existing / name, directory / name)
         shutil.copytree(existing / "phone", directory / "phone")
     (build_leaf or (_cryptography_leaf if x509 is not None else _openssl_leaf))(directory, names)
+    if not IS_WINDOWS:
+        for key in ("issuer.key", "server.key"):
+            (directory / key).chmod(0o600)
     with (directory / "server.pem").open("ab") as chain:
         chain.write((directory / "issuer.pem").read_bytes())
     (directory / "names").write_text("\n".join(names), encoding="ascii")
-    (directory / "version").write_text(str(IDENTITY_VERSION), encoding="ascii")
+    (directory / "version").write_text(str(version), encoding="ascii")
 
 
 def write_phone_files(directory):
@@ -277,7 +280,7 @@ def _current_dir(state_dir):
 
 
 def tls_identity(address, hostname, renew, state_dir=STATE_DIR, *, build_identity=make_identity,
-                 is_expired=certificate_expired):
+                 is_expired=certificate_expired, identity_version=IDENTITY_VERSION):
     state_dir = private_state_dir(state_dir)
     with (state_dir / "lock").open("a") as lock:
         lock_file(lock)
@@ -286,7 +289,7 @@ def tls_identity(address, hostname, renew, state_dir=STATE_DIR, *, build_identit
         if hostname and address != "127.0.0.1":
             names.append(hostname)
         existing_names = (current / "names").read_text(encoding="ascii").splitlines() if current.exists() else []
-        replace_root = (renew or not existing_names or _identity_version(current) != IDENTITY_VERSION
+        replace_root = (renew or not existing_names or _identity_version(current) != identity_version
                         or any(not (current / name).is_file() for name in ISSUER_FILES)
                         or is_expired(current / "root.pem", within_days=7)
                         or is_expired(current / "issuer.pem", within_days=7))
@@ -294,7 +297,8 @@ def tls_identity(address, hostname, renew, state_dir=STATE_DIR, *, build_identit
                 or is_expired(current / "server.pem", within_days=7)):
             directory = Path(tempfile.mkdtemp(prefix="tls-", dir=state_dir))
             try:
-                build_identity(directory, names, existing=None if replace_root else current)
+                build_identity(directory, names, existing=None if replace_root else current,
+                               version=identity_version)
                 context = _server_context(directory)
                 previous = current.resolve() if current.exists() else None
                 _point_current_at(state_dir, state_dir / "certificates", directory)

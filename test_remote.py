@@ -511,6 +511,15 @@ class RemoteSecurityTests(unittest.TestCase):
             self.assertNotEqual(tls_identity("192.168.1.3", "couch.local", True, state)[3], fingerprint)
             self.assertFalse(previous.exists())
 
+    def test_certificate_format_upgrade_rotates_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "tls"
+            old = tls_identity("192.168.1.2", None, False, state)[3]
+            _, path, _, updated = tls_identity("192.168.1.2", None, False, state, identity_version=4)
+            self.assertNotEqual(updated, old)
+            self.assertEqual((path / "version").read_text(), "4")
+            self.assertEqual(tls_identity("192.168.1.3", None, False, state, identity_version=4)[3], updated)
+
 
 if __name__ == "__main__":
     unittest.main()

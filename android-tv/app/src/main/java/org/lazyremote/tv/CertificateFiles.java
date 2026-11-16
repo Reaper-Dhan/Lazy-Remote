@@ -49,11 +49,12 @@ final class CertificateFiles {
         writePem(directory, "root.pem", "CERTIFICATE", rootCertificate.build(signer(root.getPrivate())).getEncoded());
 
         var issuerCertificate = certificate(ROOT, ISSUER, issuer, root, 1825, 0);
-        GeneralSubtree[] privateNetworks = {
+        GeneralSubtree[] localNames = {
+            new GeneralSubtree(new GeneralName(GeneralName.dNSName, "local")),
             network("10.0.0.0/8"), network("172.16.0.0/12"), network("192.168.0.0/16"),
             network("127.0.0.1/32"),
         };
-        issuerCertificate.addExtension(Extension.nameConstraints, true, new NameConstraints(privateNetworks, null));
+        issuerCertificate.addExtension(Extension.nameConstraints, true, new NameConstraints(localNames, null));
         writePem(directory, "issuer.pem", "CERTIFICATE", issuerCertificate.build(signer(root.getPrivate())).getEncoded());
         writePem(directory, "issuer.key", "PRIVATE KEY", issuer.getPrivate().getEncoded());
     }

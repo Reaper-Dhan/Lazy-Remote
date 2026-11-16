@@ -12,6 +12,7 @@ from tls_setup import make_identity, tls_identity
 TV_KEYS = frozenset(("up", "down", "left", "right", "enter", "tv_home", "tv_back",
                      "vol_up", "vol_down", "vol_mute", "media_play"))
 PORT = 8765
+IDENTITY_VERSION = 4
 
 
 class TvInput:
@@ -64,12 +65,13 @@ class TvHost:
                 context, identity, names, fingerprint = tls_identity(
                     address, None, False, state, build_identity=self.make_identity,
                     is_expired=lambda path, within_days: self.platform.certificateExpires(str(path), within_days),
+                    identity_version=IDENTITY_VERSION,
                 )
                 if self.stop.is_set():
                     return
                 server.configure_tls(context, names)
                 remote = self.remote = server.remote = TvRemote(
-                    TvInput(self.platform), state / "browser.json", on_change=self.notify,
+                    TvInput(self.platform), state / "browser.json", on_change=self.notify, stop_event=self.stop,
                 )
                 remote.new_code(publish=False)
                 self.notify("ready", url=f"https://{address}:{server.server_port}/", fingerprint=fingerprint,
@@ -82,30 +84,25 @@ class TvHost:
         except Exception as error:
             self.notify("notice", message=str(error))
         finally:
-            if self.remote:
-                with self.remote.lock:
-                    self.remote.revoke()
-            self.stop.set()
+            self.close()
             if worker:
                 worker.join()
             self.remote = None
             self.notify("stopped")
 
-    def make_identity(self, directory, names, existing=None):
+    def make_identity(self, directory, names, existing=None, *, version):
         make_identity(
             directory, names, existing,
             build_issuer=lambda path: self.platform.makeIssuer(str(path)),
             build_leaf=lambda path, hosts: self.platform.makeLeaf(str(path), hosts[0]),
+            version=version,
         )
 
     def close(self):
         self.stop.set()
         remote = self.remote
         if remote:
-            with remote.lock:
-                remote.pairing.pending = None
-                remote.pairing.clear_codes()
-                remote.revoke()
+            remote.shutdown()
 
     def local(self, action, match=""):
         remote = self.remote
