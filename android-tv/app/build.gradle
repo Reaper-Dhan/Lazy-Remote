@@ -34,7 +34,7 @@ android {
 def sharedPython = layout.buildDirectory.dir("sharedPython")
 def syncSharedPython = tasks.register("syncSharedPython", Sync) {
     from(rootProject.layout.projectDirectory.dir("..")) {
-        include "auth.py", "platform_support.py", "server.py", "tls_setup.py"
+        include "auth.py", "platform_support.py", "server.py", "tls_setup.py", "bluetooth_transport.py"
         include "index.html", "remote.js", "remote.css", "pwa.js", "qr-scan.js"
         include "service-worker.js", "manifest.webmanifest", "offline.html"
         include "assets/logo.svg", "assets/touch-icon.png", "assets/apple-touch-icon.png"

@@ -69,6 +69,7 @@ def main():
         "--noupx", "--name", name, "--icon", str(ROOT / "assets" / "logo.png"),
         "--distpath", str(work / "dist"), "--workpath", str(work / "build"), "--specpath", str(work),
         "--hidden-import", "server", "--hidden-import", "input_backends",
+        "--hidden-import", "bluetooth_transport",
         "--paths", str(ROOT),
     ]
     if windows:

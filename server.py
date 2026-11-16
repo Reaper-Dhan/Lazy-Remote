@@ -486,6 +486,20 @@ class Remote:
             self.publish()
         self.flush_drag_release()
 
+    def cancel_request(self, request_key):
+        """Cancel this native client's pending approval or unconfirmed claim."""
+        with self.lock:
+            self.expire(time.monotonic())
+            pending = self.pairing.request_for(None, request_key)
+            if pending:
+                self.pairing.pending = None
+                self.pairing.generate(time.monotonic())
+            elif self.can_recover_claim(request_key):
+                self.revoke()
+                self.pairing.generate(time.monotonic())
+            self.publish()
+        self.flush_drag_release()
+
     def command(self, token, tab, command):
         # Reject unauthenticated requests before they can wait on the native input queue.
         with self.lock:
@@ -778,9 +792,13 @@ class Handler(BaseHTTPRequestHandler):
             self.json_reply(error.status, {"error": str(error)})
 
 
+LAUNCHER_OUTPUT_LOCK = threading.Lock()
+
+
 def launcher_event(event, **data):
     try:
-        print(json.dumps({"event": event, **data}), flush=True)
+        with LAUNCHER_OUTPUT_LOCK:
+            print(json.dumps({"event": event, **data}), flush=True)
     except BrokenPipeError:
         pass
 
@@ -799,6 +817,14 @@ def local_controls(remote, stop, launcher):
             return
         command = line.strip()
         try:
+            if launcher and command.startswith("bluetooth "):
+                from bluetooth_transport import local_request
+                try:
+                    reply = local_request(remote, command.removeprefix("bluetooth "))
+                    launcher_event("bluetooth", response=reply)
+                except (ValueError, RecursionError):
+                    launcher_event("notice", message="Invalid Bluetooth request.")
+                continue
             decision = re.fullmatch(r"(approve|deny) ([0-9]{6})", command)
             if decision:
                 remote.decide(decision[2], decision[1] == "approve")

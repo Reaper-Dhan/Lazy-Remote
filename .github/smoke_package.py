@@ -1,6 +1,7 @@
 """Exercise the packaged server and the launcher protocol over loopback HTTPS."""
 
 import http.client
+import base64
 import json
 import os
 from pathlib import Path
@@ -106,6 +107,38 @@ def smoke(process):
     request("/api/disconnect", {}, cookie=session, tab=tab)
     request("/api/status", cookie=session, tab=tab, expected=401)
 
+    # Exercise the exact local pipe used by the native Bluetooth host too.
+    page = secrets.token_hex(32)
+
+    def bluetooth(operation, **fields):
+        identifier = secrets.token_hex(16)
+        message = {"id": identifier, "op": operation, "request_key": page, **fields}
+        encoded = base64.b64encode(json.dumps(message).encode()).decode()
+        process.stdin.write(f"bluetooth {encoded}\n")
+        process.stdin.flush()
+        result = json.loads(base64.b64decode(next_event(events, "bluetooth")["response"]))
+        assert result["id"] == identifier
+        return result
+
+    assert bluetooth("cmd", body={"action": "key", "name": "space"})["status"] == 401
+    # The preceding response is a pipe barrier: earlier approval events have
+    # been consumed, so the next pairing event belongs to this new code.
+    process.stdin.write("new_code\n")
+    process.stdin.flush()
+    fresh = next_event(events, "pairing")
+    assert bluetooth("pair", body={"qr": fresh["qr"]})["status"] == 202
+    pending = bluetooth("status")
+    assert pending["match"] and not pending["approved"]
+    assert bluetooth("claim")["status"] == 409
+    process.stdin.write(f"approve {pending['match']}\n")
+    process.stdin.flush()
+    session = bluetooth("claim")
+    assert session["status"] == 200
+    credentials = {field: session[field] for field in ("token", "tab")}
+    assert bluetooth("status", **credentials)["status"] == 200
+    assert bluetooth("cancel", **credentials)["status"] == 200
+    assert bluetooth("status", **credentials)["status"] == 401
+
 
 def main(command):
     with tempfile.TemporaryDirectory() as directory:
@@ -123,7 +156,7 @@ def main(command):
                     process.kill()
                     raise
             assert process.returncode == 0, process.returncode
-    print("Packaged HTTPS, phone profile, pairing, approval, and revocation passed.")
+    print("Packaged HTTPS, phone profile, native Bluetooth dispatch, approval, and revocation passed.")
 
 
 if __name__ == "__main__":

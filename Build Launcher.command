@@ -56,7 +56,7 @@ universal "$app/Contents/MacOS/LazyRemote" -parse-as-library Launcher.swift
 # Everything the server needs ships inside the app, so users only download the app.
 server="$app/Contents/Resources/server"
 mkdir -p "$server/assets" "$server/vendor"
-cp auth.py platform_support.py server.py tls_setup.py index.html remote.js remote.css pwa.js qr-scan.js service-worker.js manifest.webmanifest offline.html "$server/"
+cp auth.py bluetooth_transport.py platform_support.py server.py tls_setup.py index.html remote.js remote.css pwa.js qr-scan.js service-worker.js manifest.webmanifest offline.html "$server/"
 cp assets/logo.svg assets/touch-icon.png assets/apple-touch-icon.png assets/app-icon-192.png assets/app-icon-512.png "$server/assets/"
 cp vendor/jsQR.js vendor/jsQR-LICENSE.txt "$server/vendor/"
 cp LICENSE "$app/Contents/Resources/LICENSE.txt"

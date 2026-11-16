@@ -521,5 +521,78 @@ class RemoteSecurityTests(unittest.TestCase):
             self.assertEqual(tls_identity("192.168.1.3", None, False, state, identity_version=4)[3], updated)
 
 
+class BluetoothSecurityTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = RecordingBridge()
+        self.remote = Remote(self.bridge)
+        self.code = self.remote.new_code()
+        self.key = "a" * 64
+
+    def request(self, operation, *, key=None, **fields):
+        from bluetooth_transport import local_request
+        import base64
+        message = {"id": "test-1", "op": operation, "request_key": key or self.key, **fields}
+        reply = local_request(self.remote, base64.b64encode(json.dumps(message).encode()).decode())
+        return json.loads(base64.b64decode(reply))
+
+    def pair(self):
+        pending = self.request("pair", body={"code": self.code})
+        self.assertEqual(pending["status"], 202)
+        self.assertEqual(self.request("claim")["status"], 409)
+        self.remote.decide(self.remote.snapshot()["match"], True)
+        session = self.request("claim")
+        self.assertEqual(session["status"], 200)
+        return {field: session[field] for field in ("token", "tab")}
+
+    def test_controls_require_code_host_approval_and_both_session_credentials(self):
+        command = {"action": "click", "button": "left", "count": 1}
+        self.assertEqual(self.request("cmd", body=command)["status"], 401)
+        self.assertEqual(self.request("pair", body={"code": "wrong"})["status"], 403)
+        session = self.pair()
+        self.assertEqual(self.request("cmd", token=session["token"], body=command)["status"], 401)
+        self.assertEqual(self.request("cmd", **session, body=command)["status"], 200)
+        self.assertEqual(self.bridge.commands, [command])
+        self.assertEqual(self.request("disconnect", **session)["status"], 200)
+        self.assertEqual(self.request("cmd", **session, body=command)["status"], 401)
+
+    def test_lost_claim_reply_is_recoverable_only_by_its_request_key(self):
+        session = self.pair()
+        self.assertEqual(self.request("claim", key="b" * 64)["status"], 401)
+        self.assertEqual(self.request("claim")["token"], session["token"])
+        self.assertEqual(self.request("status", **session)["status"], 200)
+        self.assertEqual(self.request("claim")["status"], 401)
+
+    def test_lock_cancels_pending_approval_or_unconfirmed_claim(self):
+        self.request("pair", body={"code": self.code})
+        self.request("cancel", key="b" * 64)
+        self.assertIsNotNone(self.remote.pairing.pending)
+        self.request("cancel")
+        self.assertIsNone(self.remote.pairing.pending)
+        self.assertEqual(self.request("claim")["status"], 401)
+        self.code = self.remote.pairing.code
+        session = self.pair()
+        self.request("cancel")
+        self.assertEqual(self.request("status", **session)["status"], 401)
+
+    def test_lock_revokes_a_confirmed_session(self):
+        session = self.pair()
+        self.request("status", **session)
+        self.request("cancel", **session)
+        self.assertIsNone(self.remote.token)
+
+    def test_invalid_or_oversized_frames_never_reach_controls(self):
+        from bluetooth_transport import local_request
+        import base64
+        for message in ([], {"id": "invalid id"}, {"id": "a" * 65}):
+            with self.assertRaises(ValueError):
+                local_request(self.remote, base64.b64encode(json.dumps(message).encode()).decode())
+        for encoded in ("!", "a" * 12001, base64.b64encode(b" " * 8193).decode()):
+            with self.assertRaises(ValueError):
+                local_request(self.remote, encoded)
+        self.assertEqual(self.request("status", key="bad")["status"], 400)
+        self.assertEqual(self.request("cmd", token="bad", body={})["status"], 400)
+        self.assertFalse(self.bridge.commands)
+
+
 if __name__ == "__main__":
     unittest.main()
