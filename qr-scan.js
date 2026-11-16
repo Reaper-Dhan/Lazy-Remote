@@ -76,7 +76,7 @@
     }
     const request = generation;
     retry.hidden = true;
-    showStatus('Allow camera access to scan the QR shown on your computer.');
+    showStatus('Allow camera access to scan the pairing QR.');
     try {
       const camera = await navigator.mediaDevices.getUserMedia({
         audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 } }
@@ -97,7 +97,7 @@
       await video.play();
       const decode = await loadDecoder();
       if (request !== generation) return;
-      showStatus('Point the camera at the pairing QR on your computer.');
+      showStatus('Point the camera at the QR displayed by Lazy Remote.');
       let lastScan = -Infinity;
       function scan(time) {
         if (request !== generation) return;

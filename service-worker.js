@@ -1,4 +1,4 @@
-const offlineCache = 'lazy-remote-offline-v1';
+const offlineCache = 'lazy-remote-offline-v2';
 const offlinePage = '/offline.html';
 const offlineAssets = ['/remote.css', '/assets/logo.svg'];
 

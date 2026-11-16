@@ -39,6 +39,8 @@ Use the TV preview APK from the `Android-TV-preview` [GitHub Actions artifact](h
 
 The server runs while you use other TV apps. It stops when the TV screen switches off or after 30 minutes without phone activity. If the TV changes networks, stop and start Lazy Remote and use the address shown on the TV.
 
+If you installed the first TV preview, save the updated certificates from the TV after starting this version. Remove the old TV trust profile or certificate from your phone and install the new one.
+
 Connect your computer and phone to the same private Wi-Fi network.
 
 ### Linux input access
@@ -58,7 +60,7 @@ This access isn’t limited to Lazy Remote: any app you run can then create a vi
 sudo rm /etc/udev/rules.d/70-lazy-remote-uinput.rules && sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-For typing, Lazy Remote uses `xdotool` (X11) or `wtype` (Wayland, except GNOME) when they’re installed, so any keyboard layout and accented letters work. Without them it types through `/dev/uinput` with a US layout.
+For typing, Lazy Remote uses `xdotool` (X11) or `wtype` (Wayland, except GNOME) when they’re installed. The `/dev/uinput` fallback assumes a US layout and rejects text it can’t type. The phone keeps the unsent text for review.
 
 ### Trust this computer on your phone
 
@@ -69,7 +71,7 @@ Open **Set up phone** in Lazy Remote. On a Mac, use the share menu to AirDrop th
 | iPhone or iPad | `Lazy Remote.mobileconfig` | Open **Settings → Profile Downloaded** after transferring the profile. Then enable **Lazy Remote Local Root** in **Settings → General → About → Certificate Trust Settings**. [Apple’s setup guide](https://support.apple.com/en-us/102390) |
 | Android | `Lazy Remote Root.cer` | Install it as a **CA certificate** in your phone’s credential settings. The menu varies by device. |
 
-If you already installed an earlier Lazy Remote profile, replace it once when upgrading to the new certificate format. Remove the old profile from your phone after installing the new one.
+Replace a phone profile when Lazy Remote generates a new root certificate. Compare the displayed fingerprint with the certificate you transferred before trusting it.
 
 ## Install on your phone
 
@@ -146,7 +148,7 @@ python -m pip install -r packaging/requirements.txt
 python packaging/build_desktop.py
 ```
 
-**Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) runs the tests on all three systems and builds all three apps on every push. Push a tag such as `v1.2.0` and it publishes a release with the three downloads, `SHA256SUMS.txt`, and the notes in [packaging/release-notes.md](packaging/release-notes.md). Actions are pinned to commit hashes and bundled packages to exact versions in [packaging/requirements.txt](packaging/requirements.txt).
+**Releases.** [.github/workflows/build.yml](.github/workflows/build.yml) tests and builds the Mac, Windows, and Linux packages and produces an Android TV preview on every push. Tags such as `v1.2.0` publish the three desktop downloads with `SHA256SUMS.txt` and the notes in [packaging/release-notes.md](packaging/release-notes.md). The Android TV preview is available as a workflow artifact.
 
 The unit tests use temporary certificates and substitute input devices. Release checks also start the packaged server on loopback to verify the phone profile, HTTPS, pairing, approval, and revocation.
 

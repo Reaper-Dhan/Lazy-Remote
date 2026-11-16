@@ -210,7 +210,6 @@ private final class Launcher: ObservableObject {
             loopback = event.loopback == true
             inputReady = event.inputReady
             phase = .running
-            if inputReady == false { openAccessibility() }
         }
         code = event.code
         qr = event.qr
