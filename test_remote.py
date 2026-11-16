@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import runpy
 import ssl
 import stat
 import tempfile
@@ -208,6 +209,42 @@ class RemoteSecurityTests(unittest.TestCase):
         self.assertEqual(self.request("/api/status", cookie=session)[0], 401)
         self.remote.decide(self.remote.snapshot()["match"], True)
         self.assertEqual(self.request("/api/claim", {}, cookie=next_pending)[0], 200)
+
+    def test_tv_host_requires_approval_and_only_dispatches_tv_buttons(self):
+        tv = runpy.run_path(str(Path(__file__).parent / "android-tv/app/src/main/python/android_host.py"))
+
+        class Tv:
+            def __init__(self):
+                self.actions = []
+
+            def ready(self):
+                return True
+
+            def availableKeys(self):
+                return ["up", "enter", "tv_back", "tv_home"]
+
+            def press(self, action):
+                if action not in self.availableKeys():
+                    return False
+                self.actions.append(action)
+                return True
+
+        platform = Tv()
+        self.remote = self.server.remote = tv["TvRemote"](tv["TvInput"](platform), self.browser_path)
+        self.code = self.remote.new_code()
+        up = {"action": "key", "name": "up"}
+        status, _, body = self.request("/api/status")
+        self.assertEqual(status, 401)
+        self.assertEqual(json.loads(body)["host"], "tv")
+        self.assertEqual(self.request("/api/cmd", up)[0], 401)
+        cookie = self.pair().split(";", 1)[0]
+        status, _, body = self.request("/api/status", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertIn("media_play", json.loads(body)["unavailable"])
+        self.assertEqual(self.request("/api/cmd", up, cookie=cookie)[0], 200)
+        self.assertEqual(self.request("/api/cmd", {"action": "click", "button": "left", "count": 1}, cookie=cookie)[0], 400)
+        self.assertEqual(self.request("/api/cmd", {"action": "key", "name": "media_play"}, cookie=cookie)[0], 422)
+        self.assertEqual(platform.actions, ["up"])
 
     def test_revoke_does_not_wait_for_native_input(self):
         cookie = self.pair().split(";", 1)[0]
@@ -422,6 +459,9 @@ class RemoteSecurityTests(unittest.TestCase):
             profile = plistlib.loads((phone / "Lazy Remote.mobileconfig").read_bytes())
             self.assertEqual(profile["PayloadContent"][0]["PayloadContent"],
                              (phone / "Lazy Remote Root.cer").read_bytes())
+            _, current, _, _ = tls_identity("192.168.1.2", "couch.local", False, Path(temporary) / "other")
+            other_profile = plistlib.loads((current / "phone" / "Lazy Remote.mobileconfig").read_bytes())
+            self.assertNotEqual(profile["PayloadIdentifier"], other_profile["PayloadIdentifier"])
             self.assertEqual(tls_identity("192.168.1.3", "couch.local", False, state)[2:],
                              (["192.168.1.3", "couch.local"], fingerprint))
             self.assertEqual(tls_identity("192.168.1.4", None, False, state)[2:],

@@ -151,6 +151,40 @@ button, input { font: inherit; }
 }
 
 .remote-controls { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.tv-controls {
+  flex: 1;
+  width: 100%;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 16px;
+  padding: var(--gutter) var(--gutter) max(var(--gutter), env(safe-area-inset-bottom, 0px));
+}
+.tv-direction {
+  width: min(100%, 300px);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-areas: ". up ." "left ok right" ". down .";
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: var(--surface);
+}
+.tv-direction .btn { min-height: 64px; font-size: 20px; }
+.tv-direction .icon { width: 24px; height: 24px; }
+.tv-up { grid-area: up; }
+.tv-down { grid-area: down; }
+.tv-left { grid-area: left; }
+.tv-right { grid-area: right; }
+.tv-ok { grid-area: ok; }
+.tv-actions {
+  width: min(100%, 300px);
+  display: flex;
+  gap: 8px;
+}
+.tv-actions .btn { flex: 1; }
 .remote-workspace {
   flex: 1;
   min-height: 0;

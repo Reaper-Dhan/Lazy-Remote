@@ -34,6 +34,7 @@
       <symbol id="icon-volume-up" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 7h5m-2.5-2.5v5"/></symbol>
       <symbol id="icon-volume-mute" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 5 4 4m0-4-4 4"/></symbol>
       <symbol id="icon-up" viewBox="0 0 24 24"><path d="m6 13 6-6 6 6m-6-6v13"/></symbol>
+      <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7m-16-1v12h14V9m-9 12v-7h4v7"/></symbol>
       <symbol id="icon-down" viewBox="0 0 24 24"><path d="m6 11 6 6 6-6m-6 6V4"/></symbol>
       <symbol id="icon-cursor" viewBox="0 0 24 24"><path d="m4 3 16 11-7 1-4 6L4 3Z"/></symbol>
       <symbol id="icon-scroll" viewBox="0 0 24 24"><path d="m8 8 4-4 4 4m-8 8 4 4 4-4m-4-6v4"/></symbol>
@@ -89,7 +90,7 @@
       </div>
       <label class="remember-browser" id="rememberFields">
         <input type="checkbox" id="rememberBrowser" />
-        <span>Remember this browser for 30 days to skip the QR scan. New sessions still need approval on your computer.</span>
+        <span>Remember this browser for 30 days to skip the QR scan. Approve each new session on the device you are controlling.</span>
       </label>
       <p id="pairError" class="pair-error" role="alert"></p>
       <button id="pairSubmit" class="btn btn-accent" type="submit" disabled>Request access</button>
@@ -97,9 +98,9 @@
       <button id="enterCodeInstead" class="btn manual-pair" type="button" hidden>Enter a code instead</button>
     </form>
     <section id="pendingPanel" hidden>
-      <h1>Approve on your computer</h1>
+      <h1 id="pendingTitle">Approve on your computer</h1>
       <p class="match-number" id="matchNumber" aria-live="polite"></p>
-      <p>Compare this number with the one on your computer, then approve the request there.</p>
+      <p>Compare this number with the one displayed by Lazy Remote, then approve the request there.</p>
     </section>
   </main>
 
@@ -113,6 +114,25 @@
   </main>
 
   <main id="remoteControls" class="remote-controls" aria-label="Computer controls" inert hidden>
+    <section id="tvControls" class="tv-controls" aria-label="Android TV controls" hidden>
+      <div class="tv-direction" role="group" aria-label="Direction pad">
+        <button type="button" class="btn tv-up" data-key="up" aria-label="Up"><svg class="icon" aria-hidden="true"><use href="#icon-up"/></svg></button>
+        <button type="button" class="btn tv-left" data-key="left" aria-label="Left"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg></button>
+        <button type="button" class="btn btn-accent tv-ok" data-key="enter">OK</button>
+        <button type="button" class="btn tv-right" data-key="right" aria-label="Right"><svg class="icon" aria-hidden="true"><use href="#icon-forward"/></svg></button>
+        <button type="button" class="btn tv-down" data-key="down" aria-label="Down"><svg class="icon" aria-hidden="true"><use href="#icon-down"/></svg></button>
+      </div>
+      <div class="tv-actions" role="group" aria-label="TV navigation">
+        <button type="button" class="btn" data-key="tv_back"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg>Back</button>
+        <button type="button" class="btn" data-key="tv_home"><svg class="icon" aria-hidden="true"><use href="#icon-home"/></svg>Home</button>
+      </div>
+      <div class="tv-actions" role="group" aria-label="TV volume and playback">
+        <button type="button" class="btn" data-key="vol_down" aria-label="Volume down"><svg class="icon" aria-hidden="true"><use href="#icon-volume-down"/></svg></button>
+        <button type="button" class="btn" data-key="vol_mute" aria-label="Toggle mute"><svg class="icon" aria-hidden="true"><use href="#icon-volume-mute"/></svg></button>
+        <button type="button" class="btn" data-key="vol_up" aria-label="Volume up"><svg class="icon" aria-hidden="true"><use href="#icon-volume-up"/></svg></button>
+        <button type="button" class="btn" data-key="media_play" aria-label="Play or pause"><svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg></button>
+      </div>
+    </section>
     <div class="remote-workspace" id="remoteWorkspace">
       <div class="trackpad-view" id="trackpadView">
         <section class="trackpad-module" aria-labelledby="trackpadTitle">

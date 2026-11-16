@@ -1,0 +1,65 @@
+plugins {
+    id("com.android.application") version "8.13.2"
+    id("com.chaquo.python") version "17.2.0"
+}
+
+android {
+    namespace = "org.lazyremote.tv"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "org.lazyremote.tv"
+        minSdk = 33
+        targetSdk = 36
+        versionCode = 1
+        versionName = "0.1.0"
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64", "x86"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ["META-INF/versions/**", "META-INF/DEPENDENCIES"]
+            merges += ["META-INF/LICENSE.md", "META-INF/NOTICE.md"]
+        }
+    }
+}
+
+def sharedPython = layout.buildDirectory.dir("sharedPython")
+def syncSharedPython = tasks.register("syncSharedPython", Sync) {
+    from(rootProject.layout.projectDirectory.dir("..")) {
+        include "auth.py", "platform_support.py", "server.py", "tls_setup.py"
+        include "index.html", "remote.js", "remote.css", "pwa.js", "qr-scan.js"
+        include "service-worker.js", "manifest.webmanifest", "offline.html"
+        include "assets/logo.svg", "assets/touch-icon.png", "assets/apple-touch-icon.png"
+        include "assets/app-icon-192.png", "assets/app-icon-512.png"
+        include "vendor/jsQR.js", "vendor/jsQR-LICENSE.txt", "LICENSE"
+    }
+    into(sharedPython)
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+    }
+    sourceSets {
+        main {
+            srcDir(sharedPython.get().asFile)
+        }
+    }
+}
+
+tasks.matching { it.name ==~ /merge.*PythonSources/ }.configureEach {
+    dependsOn(syncSharedPython)
+}
+
+dependencies {
+    implementation("com.google.zxing:core:3.5.4")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.87")
+}

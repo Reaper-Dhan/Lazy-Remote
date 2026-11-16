@@ -28,6 +28,8 @@ const scanPairing = document.getElementById('scanPairing');
 const remoteControls = document.getElementById('remoteControls');
 const remoteWorkspace = document.getElementById('remoteWorkspace');
 const remoteDock = document.getElementById('remoteDock');
+const tvControls = document.getElementById('tvControls');
+const pendingTitle = document.getElementById('pendingTitle');
 const header = document.querySelector('.header');
 const trackpadView = document.getElementById('trackpadView');
 const mediaView = document.getElementById('mediaView');
@@ -78,6 +80,7 @@ if (qrValue !== null) history.replaceState(null, '', location.pathname + locatio
 
 let paired = false;
 let tab = null;
+let isTv = false;
 let remembered = false;
 let awaitingApproval = false;
 let manualPairing = false;
@@ -202,15 +205,15 @@ function renderState(state, message) {
   disconnectBtn.hidden = !paired;
   remoteControls.hidden = !ready;
   remoteControls.inert = !ready;
-  controlSettings.hidden = !ready;
-  drawerTrigger.hidden = !ready;
+  controlSettings.hidden = !ready || isTv;
+  drawerTrigger.hidden = !ready || isTv;
   pairPanel.hidden = state !== 'pair' && state !== 'pending';
   connectionPanel.hidden = ready || !pairPanel.hidden;
   if (!connectionPanel.hidden) {
-    connectionTitle.textContent = state === 'offline' ? 'Computer unavailable'
-      : state === 'permission' ? 'Input access needed' : 'Connecting to your computer';
+    connectionTitle.textContent = state === 'offline' ? (isTv ? 'TV unavailable' : 'Computer unavailable')
+      : state === 'permission' ? 'Input access needed' : `Connecting to your ${isTv ? 'TV' : 'computer'}`;
     connectionHelp.textContent = state === 'offline' ? 'Check that both devices are on the same network and the server is running.'
-      : state === 'permission' ? message : 'Keep Lazy Remote open on your computer.';
+      : state === 'permission' ? message : `Keep Lazy Remote running on your ${isTv ? 'TV' : 'computer'}.`;
     retryConnection.hidden = state === 'checking';
   }
   pairForm.hidden = state === 'pending';
@@ -236,11 +239,12 @@ function showPairing(message = 'Access locked') {
   paired = false;
   const returning = remembered && !qrTicket && !manualPairing;
   const needsCode = !returning && !qrTicket;
+  const host = isTv ? 'TV' : 'computer';
   pairTitle.textContent = returning ? 'Reconnect' : 'Pair this browser';
   pairHelp.textContent = returning
-    ? 'Request access, then approve it on your computer.'
-    : qrTicket ? 'Pairing QR ready. Request access, then approve it on your computer.'
-      : 'Scan the QR code on your computer or enter the pairing code.';
+    ? `Request access, then approve it on your ${host}.`
+    : qrTicket ? `Pairing QR ready. Request access, then approve it on your ${host}.`
+      : `Scan the QR code on your ${host} or enter the pairing code.`;
   pairCodeFields.hidden = !needsCode;
   pairCode.required = needsCode;
   rememberFields.hidden = returning;
@@ -271,11 +275,12 @@ function acceptScannedPairingLink(text) {
 
 function showPending(match) {
   paired = false;
+  pendingTitle.textContent = `Approve on your ${isTv ? 'TV' : 'computer'}`;
   if (matchNumber.textContent !== match) matchNumber.textContent = match;
   renderState('pending', 'Waiting for approval');
 }
 
-function showOffline(message = 'Computer unreachable. Reconnecting…') {
+function showOffline(message = `${isTv ? 'TV' : 'Computer'} unreachable. Reconnecting…`) {
   renderState('offline', message);
 }
 
@@ -337,6 +342,12 @@ async function checkConnection() {
       status = await api('/api/status');
     }
     if (started !== revision || document.hidden) return;
+    if (status.status === 200 || status.status === 401) {
+      isTv = status.host === 'tv';
+      tvControls.hidden = !isTv;
+      remoteWorkspace.hidden = remoteDock.hidden = isTv;
+      remoteControls.setAttribute('aria-label', isTv ? 'Android TV remote' : 'Computer controls');
+    }
     if (status.status === 401) {
       statusFailures = 0;
       if (tab) revision++;
@@ -352,7 +363,7 @@ async function checkConnection() {
         awaitingApproval = false;
         showPairing();
         if (status.new_pairing_required && !qrTicket) {
-          pairError.textContent = 'This page was reopened. On the computer, click Lock phone to get a fresh pairing QR or code.';
+          pairError.textContent = `This page was reopened. Use Lock phone on the ${isTv ? 'TV' : 'computer'} to get a fresh pairing QR or code.`;
         }
       }
     } else if (status.status === 200 && typeof status.ready === 'boolean') {
@@ -364,7 +375,8 @@ async function checkConnection() {
       updateAvailableKeys(status.unavailable || []);
       renderState(status.ready ? 'ready' : 'permission', status.ready
         ? 'Connected securely'
-        : 'Allow mouse and keyboard control in Lazy Remote on the computer.');
+        : isTv ? 'Wake and unlock the TV, and enable Lazy Remote in Accessibility.'
+          : 'Allow mouse and keyboard control in Lazy Remote on the computer.');
       if (!busy && !motionInFlight && dragAtStart === dragRevision) {
         updateDrag(status.dragging);
         if (releaseDragOnResume && status.ready) {

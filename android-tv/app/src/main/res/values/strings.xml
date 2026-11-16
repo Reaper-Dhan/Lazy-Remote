@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Lazy Remote</string>
+    <string name="service_summary">Use your approved phone as the TV remote.</string>
+    <string name="service_description">Sends direction, OK, Back, Home, and supported media buttons when you use an approved phone. Lazy Remote does not read the screen.</string>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#CEF29B</item>
+        <item name="android:windowBackground">#101317</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

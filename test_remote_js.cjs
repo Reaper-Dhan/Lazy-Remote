@@ -20,7 +20,7 @@ function element() {
   };
 }
 
-async function remote({ unavailable = [], approve = false, claimReply, reply, statusReply,
+async function remote({ unavailable = [], approve = false, claimReply, reply, statusReply, host,
                         gestureSettings = {}, pairOrigins } = {}) {
   const elements = new Map();
   const bright = element();
@@ -29,6 +29,8 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
   space.dataset = { key: 'space' };
   const left = element();
   const right = element();
+  const tvBack = element();
+  tvBack.dataset = { key: 'tv_back' };
   left.dataset = { click: 'left', count: '1' };
   right.dataset = { click: 'right', count: '1' };
   const documentEvents = {};
@@ -42,7 +44,8 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
     },
     querySelector: () => element(),
     querySelectorAll: selector => selector === '[data-click]' ? [left, right]
-      : selector === '[data-key]:not([data-swipe])' ? [bright, space] : [],
+      : selector === '[data-key]:not([data-swipe])' ? [bright, space, tvBack]
+        : selector === '[data-key]' ? [tvBack] : [],
   };
   const get = document.getElementById;
   get('speedSlider').value = '2';
@@ -81,11 +84,11 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
       if (path === '/api/status') {
         if (statusReply) await statusReply();
         if (!authorized) return { status: 401, json: async () => ({
-          approved, remembered: true, pairing_origins: pairOrigins,
+          host, approved, remembered: true, pairing_origins: pairOrigins,
           match: pendingPair ? '340287' : null,
         }) };
         return { status: 200, json: async () => ({
-          ready: true, dragging, unavailable,
+          host, ready: true, dragging, unavailable,
           gestures: {
             tap: false, secondary_tap: false, pinch_zoom: true,
             swipes: ['swipe_up', 'swipe_left'], ...gestureSettings,
@@ -104,7 +107,7 @@ async function remote({ unavailable = [], approve = false, claimReply, reply, st
   await settle();
   const pad = get('trackpad');
   return {
-    commands, requests, get, left, right, bright, space,
+    commands, requests, get, left, right, bright, space, tvBack,
     scan: link => vm.runInContext('acceptScannedPairingLink(' + JSON.stringify(link) + ')', scope),
     async visibility(hidden) {
       document.hidden = hidden;
@@ -307,6 +310,19 @@ test('buttons for keys the computer cannot send are hidden', async () => {
   const pad = await remote({ unavailable: ['bright_up'] });
   assert.equal(pad.bright.hidden, true);
   assert.equal(pad.space.hidden, false);
+});
+
+test('an Android TV host gets a D-pad, TV approval copy, and TV navigation', async () => {
+  const pad = await remote({ host: 'tv' });
+  assert.equal(pad.get('tvControls').hidden, false);
+  assert.equal(pad.get('remoteWorkspace').hidden, true);
+  assert.equal(pad.get('remoteDock').hidden, true);
+  pad.tvBack.events.click();
+  await settle();
+  assert.deepEqual(pad.commands, [{ action: 'key', name: 'tv_back' }]);
+  await pad.get('disconnectBtn').events.click();
+  await settle();
+  assert.match(pad.get('pairHelp').textContent, /approve it on your TV/);
 });
 
 test('small drift stays a tap for primary and secondary clicks', async () => {
