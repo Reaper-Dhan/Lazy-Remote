@@ -77,7 +77,8 @@ public final class TvRuntime {
         LinkProperties properties = manager.getLinkProperties(active);
         if (type != null && properties != null
                 && (type.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-                    || type.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+                    || type.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    || type.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH))
                 && !type.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
             for (LinkAddress link : properties.getLinkAddresses()) {
                 if (link.getAddress() instanceof Inet4Address && link.getAddress().isSiteLocalAddress()) {
@@ -85,7 +86,7 @@ public final class TvRuntime {
                 }
             }
         }
-        throw new IllegalStateException("Connect the TV to the same private Wi-Fi or Ethernet network as your phone.");
+        throw new IllegalStateException("Connect the TV to a private Wi-Fi, Ethernet, or Bluetooth network your phone can reach.");
     }
 
     // Called by the shared Python host.
